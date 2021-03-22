@@ -34,6 +34,9 @@ func (p *Orderer) Build(e dag.MutableEvent) error {
 // All the event checkers must be launched.
 // Process is not safe for concurrent use.
 func (p *Orderer) Process(e dag.Event) (err error) {
+	println("start  event", e.String())
+	defer println("finish event", e.String())
+
 	err, selfParentFrame := p.checkAndSaveEvent(e)
 	if err != nil {
 		return err
@@ -79,12 +82,14 @@ func (p *Orderer) handleElection(selfParentFrame idx.Frame, root dag.Event) erro
 			continue
 		}
 
+		println("frame decided", decided.Frame, decided.Atropos.String())
 		// if we’re here, then this root has observed that lowest not decided frame is decided now
 		sealed, err := p.onFrameDecided(decided.Frame, decided.Atropos)
 		if err != nil {
 			return err
 		}
 		if sealed {
+			println("epoch sealed")
 			break
 		}
 		err = p.bootstrapElection()

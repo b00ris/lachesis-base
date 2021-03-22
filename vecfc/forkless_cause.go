@@ -27,12 +27,14 @@ type kv struct {
 // providing the base for the BFT algorithm.
 func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
 	if res, ok := vi.cache.ForklessCause.Get(kv{aID, bID}); ok {
+		println("forklessCause", aID.String(), bID.String(), res.(bool), "cached")
 		return res.(bool)
 	}
 
 	vi.Engine.InitBranchesInfo()
 	res := vi.forklessCause(aID, bID)
 
+	println("forklessCause", aID.String(), bID.String(), res, "comput")
 	vi.cache.ForklessCause.Add(kv{aID, bID}, res, 1)
 	return res
 }

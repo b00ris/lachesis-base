@@ -104,6 +104,7 @@ func (el *Election) observedRoots(root hash.Event, frame idx.Frame) []RootAndSlo
 
 	frameRoots := el.getFrameRoots(frame)
 	for _, frameRoot := range frameRoots {
+		println("frameRoot", frameRoot.ID.String(), frameRoot.Slot.Validator, frameRoot.Slot.Frame)
 		if el.observe(root, frameRoot.ID) {
 			observedRoots = append(observedRoots, frameRoot)
 		}
@@ -116,6 +117,7 @@ func (el *Election) observedRootsMap(root hash.Event, frame idx.Frame) map[idx.V
 
 	frameRoots := el.getFrameRoots(frame)
 	for _, frameRoot := range frameRoots {
+		println("frameRoot", frameRoot.ID.String(), frameRoot.Slot.Validator, frameRoot.Slot.Frame)
 		if el.observe(root, frameRoot.ID) {
 			observedRootsMap[frameRoot.Slot.Validator] = frameRoot
 		}

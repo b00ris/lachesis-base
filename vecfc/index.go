@@ -1,6 +1,8 @@
 package vecfc
 
 import (
+	"time"
+
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
@@ -105,8 +107,10 @@ func (vi *Index) Reset(validators *pos.Validators, db kvdb.Store, getEvent func(
 	vi.getEvent = getEvent
 	vi.validators = validators
 	vi.validatorIdxs = validators.Idxs()
+	start := time.Now()
 	vi.cache.ForklessCause.Purge()
 	vi.onDropNotFlushed()
+	println("reset caches", time.Since(start).String())
 }
 
 func (vi *Index) GetEngineCallbacks() vecengine.Callbacks {

@@ -38,6 +38,7 @@ func (el *Election) ProcessRoot(newRoot RootAndSlot) (*Res, error) {
 	for _, validatorSubject := range notDecidedRoots {
 		vote := voteValue{}
 
+		println("validatorSubject", validatorSubject)
 		if round == 1 {
 			// in initial round, vote "yes" if observe the subject
 			observedRoot, ok := observedRootsMap[validatorSubject]
@@ -70,8 +71,10 @@ func (el *Election) ProcessRoot(newRoot RootAndSlot) (*Res, error) {
 					if vote.yes {
 						subjectHash = &vote.observedRoot
 						yesVotes.Count(observedRoot.Slot.Validator)
+						println("yes", observedRoot.Slot.Validator)
 					} else {
 						noVotes.Count(observedRoot.Slot.Validator)
+						println("no", observedRoot.Slot.Validator)
 					}
 					if !allVotes.Count(observedRoot.Slot.Validator) {
 						// it shouldn't be possible to get here, because we've taken 1 root from every node above
@@ -84,6 +87,7 @@ func (el *Election) ProcessRoot(newRoot RootAndSlot) (*Res, error) {
 			}
 			// sanity checks
 			if !allVotes.HasQuorum() {
+				println("sum", allVotes.Sum())
 				return nil, errors.New("root must be forkless caused by at least 2/3W of prev roots. possibly roots are processed out of order")
 			}
 
@@ -107,6 +111,7 @@ func (el *Election) ProcessRoot(newRoot RootAndSlot) (*Res, error) {
 		}
 		el.votes[vid] = vote
 	}
+	println("---")
 
 	// check if election is decided
 	return el.chooseAtropos()

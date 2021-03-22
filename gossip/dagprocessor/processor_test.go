@@ -16,8 +16,8 @@ import (
 )
 
 func TestProcessor(t *testing.T) {
-	for try := int64(0); try < 500; try++ {
-		testProcessor(t, try)
+	for try := 0; try < 500; try++ {
+		testProcessor(t)
 	}
 }
 
@@ -47,7 +47,7 @@ func shuffleIntoChunks(inEvents dag.Events) []dag.Events {
 	return chunks
 }
 
-func testProcessor(t *testing.T, try int64) {
+func testProcessor(t *testing.T) {
 	nodes := tdag.GenNodes(5)
 
 	var ordered dag.Events
