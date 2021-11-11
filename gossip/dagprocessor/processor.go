@@ -70,8 +70,8 @@ func New(eventsSemaphore *datasemaphore.DataSemaphore, cfg Config, callback Call
 		Exists:   callback.Event.Exists,
 		Check:    callback.Event.CheckParents,
 	})
-	f.orderedInserter = workers.New(&f.wg, f.quit, cfg.MaxTasks)
-	f.checker = workers.New(&f.wg, f.quit, cfg.MaxTasks)
+	f.orderedInserter = workers.New(&f.wg, nil, f.quit, cfg.MaxTasks)
+	f.checker = workers.New(&f.wg, nil, f.quit, cfg.MaxTasks)
 	return f
 }
 

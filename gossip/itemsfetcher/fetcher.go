@@ -80,7 +80,7 @@ func New(cfg Config, callback Callback) *Fetcher {
 	f.announces, _ = wlru.NewWithEvict(uint(cfg.HashLimit), cfg.HashLimit, func(key interface{}, _ interface{}) {
 		delete(f.fetching, key.(interface{}))
 	})
-	f.parallelTasks = workers.New(&f.wg, f.quit, f.cfg.MaxParallelRequests*2)
+	f.parallelTasks = workers.New(&f.wg, nil, f.quit, f.cfg.MaxParallelRequests*2)
 	return f
 }
 
