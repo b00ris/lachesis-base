@@ -53,6 +53,7 @@ func (p *Orderer) checkAndSaveEvent(e dag.Event) (error, idx.Frame) {
 	// check frame & isRoot
 	selfParentFrame, frameIdx := p.calcFrameIdx(e, true)
 	if e.Frame() != frameIdx {
+		println(e.Frame(), frameIdx, p.store.GetValidators().Len(), p.store.GetEpoch(), p.store.GetLastDecidedFrame())
 		return ErrWrongFrame, 0
 	}
 
@@ -151,12 +152,15 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 	// check "observing" prev roots only if called by creator, or if creator has marked that event as root
 	for _, it := range p.store.GetFrameRoots(f) {
 		if p.dagIndex.ForklessCause(e.ID(), it.ID) {
+			println("count", it.Slot.Validator)
 			observedCounter.Count(it.Slot.Validator)
 		}
+		println("not count", it.Slot.Validator)
 		if observedCounter.HasQuorum() {
 			break
 		}
 	}
+	println("forklessCausedByQuorumOn", f, observedCounter.HasQuorum())
 	return observedCounter.HasQuorum()
 }
 
