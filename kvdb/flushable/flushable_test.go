@@ -179,17 +179,18 @@ func TestFlushable(t *testing.T) {
 
 			testForEach := func(db kvdb.Store, first bool) {
 
+				snap, _ := db.GetSnapshot()
 				var it kvdb.Iterator
 				if try%4 == 0 {
-					it = db.NewIterator(nil, nil)
+					it = snap.NewIterator(nil, nil)
 				} else if try%4 == 1 {
-					it = db.NewIterator(prefix, nil)
+					it = snap.NewIterator(prefix, nil)
 				} else if try%4 == 2 {
-					it = db.NewIterator(nil, prefix)
+					it = snap.NewIterator(nil, prefix)
 				} else {
-					it = db.NewIterator(prefix[:len(prefix)/2], prefix[len(prefix)/2:])
+					it = snap.NewIterator(prefix[:len(prefix)/2], prefix[len(prefix)/2:])
 				}
-				defer it.Release()
+				snap.Release()
 
 				var got int
 
@@ -212,6 +213,7 @@ func TestFlushable(t *testing.T) {
 				if !assertar.NoError(it.Error()) {
 					return
 				}
+				it.Release()
 
 				assertar.Equal(len(expectPairs), got) // check that we've got the same num of pairs
 			}
@@ -236,8 +238,9 @@ func TestFlushable(t *testing.T) {
 
 			for j := 0; j < tablesNum; j++ {
 				// get values for first group, so we could check that all groups return the same result
-				ok, _ := dbsTables[0][j].Has(key)
-				vl, _ := dbsTables[0][j].Get(key)
+				snap, _ := dbsTables[0][j].GetSnapshot()
+				ok, _ := snap.Has(key)
+				vl, _ := snap.Get(key)
 
 				// check that all groups return the same result
 				for i := 0; i < groupsNum; i++ {
@@ -306,7 +309,8 @@ func TestFlushableIterator(t *testing.T) {
 	flushable2.Put(veryFirstKey, []byte("first"))
 	flushable2.Put(veryLastKey, []byte("last"))
 
-	it := flushable1.NewIterator(nil, nil)
+	snap, _ := flushable1.GetSnapshot()
+	it := snap.NewIterator(nil, nil)
 	defer it.Release()
 
 	err := flushable2.Flush()

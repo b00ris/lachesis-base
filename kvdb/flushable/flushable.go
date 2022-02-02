@@ -3,10 +3,13 @@ package flushable
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"math/rand"
 	"sync"
 
 	rbt "github.com/emirpasic/gods/trees/redblacktree"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/status-im/keycard-go/hexutils"
 
 	"github.com/Fantom-foundation/lachesis-base/kvdb"
 )
@@ -32,6 +35,8 @@ type flushableReader struct {
 	modified *rbt.Tree // modified, comparing to parent, pairs. deleted values are nil
 
 	lock sync.RWMutex
+
+	name string
 }
 
 // Wrap underlying db.
@@ -259,8 +264,6 @@ type flushableIterator struct {
 	treeOk   bool
 
 	start, prefix []byte
-
-	inited bool
 }
 
 // returns the smallest node which is > than specified node
@@ -293,15 +296,16 @@ func castToPair(node *rbt.Node) (key, val []byte) {
 	if node.Value == nil {
 		val = nil // deleted key
 	} else {
-		val = node.Value.([]byte) // putted value
+		val = node.Value.([]byte) // inserted value
 	}
 	return key, val
 }
 
 // init should be called once under lock
 func (it *flushableIterator) init() {
+	println("init", it != nil, it.tree != nil)
 	it.parentOk = it.parentIt.Next()
-	if it.start != nil {
+	if len(it.start) != 0 {
 		it.treeNode, it.treeOk = it.tree.Ceiling(string(it.start)) // not strict >=
 	} else {
 		it.treeNode = it.tree.Left() // lowest key
@@ -418,15 +422,20 @@ func (w *Flushable) GetSnapshot() (kvdb.Snapshot, error) {
 		return nil, err
 	}
 	modifiedCopy := rbt.NewWithStringComparator()
+	nn := 0
 	for it := w.modified.Iterator(); it.Next(); {
 		modifiedCopy.Put(it.Key(), it.Value())
+		nn++
 	}
+	name := fmt.Sprintf("%d", rand.Uint64())
+	println("GetSnapshot", nn, w.modified != nil, modifiedCopy != nil, name)
 	return &Snapshot{
 		flushableReader: flushableReader{
 			underlying: parentSnap,
 			modified:   modifiedCopy,
 			// Note: Snapshot has an independent mutex
 			lock: sync.RWMutex{},
+			name: name,
 		},
 		parentSnap: parentSnap,
 	}, nil
@@ -438,6 +447,7 @@ func (w *Flushable) GetSnapshot() (kvdb.Snapshot, error) {
 func (w *flushableReader) NewIterator(prefix []byte, start []byte) kvdb.Iterator {
 	w.lock.RLock()
 	defer w.lock.RUnlock()
+	println("NewIterator", hexutils.BytesToHex(prefix), hexutils.BytesToHex(start), w.modified != nil, w.name)
 
 	it := &flushableIterator{
 		lock:     &w.lock,
