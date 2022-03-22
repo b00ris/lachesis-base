@@ -115,13 +115,18 @@ func (w *Store) Close() error {
 	if w.diff == nil {
 		return errClosed
 	}
-	w.diff = nil
 
 	err := w.back.Close()
 	if err != nil {
-		err = nil
+		return err
 	}
-	return w.diff.Close()
+	err = w.diff.Close()
+	if err != nil {
+		return err
+	}
+	w.diff = nil
+	w.back = nil
+	return nil
 }
 
 // Drop whole database.
