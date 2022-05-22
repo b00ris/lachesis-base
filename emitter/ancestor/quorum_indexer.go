@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/Fantom-foundation/lachesis-base/abft"
 	"github.com/Fantom-foundation/lachesis-base/abft/dagidx"
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
@@ -21,6 +22,8 @@ type QuorumIndexer struct {
 	dagi       DagIndex
 	validators *pos.Validators
 
+	lachesis abft.Lachesis
+
 	globalMatrix     Matrix
 	selfParentSeqs   []idx.Event
 	globalMedianSeqs []idx.Event
@@ -30,7 +33,7 @@ type QuorumIndexer struct {
 	diffMetricFn DiffMetricFn
 }
 
-func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn) *QuorumIndexer {
+func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis abft.Lachesis) *QuorumIndexer {
 	return &QuorumIndexer{
 		globalMatrix:     NewMatrix(validators.Len(), validators.Len()),
 		globalMedianSeqs: make([]idx.Event, validators.Len()),
@@ -39,6 +42,7 @@ func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn Di
 		validators:       validators,
 		diffMetricFn:     diffMetricFn,
 		dirty:            true,
+		lachesis:         lachesis,
 	}
 }
 
