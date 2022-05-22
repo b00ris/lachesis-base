@@ -2,6 +2,7 @@ package abft
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/Fantom-foundation/lachesis-base/abft/election"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
@@ -26,6 +27,10 @@ type EpochState struct {
 	Validators *pos.Validators
 }
 
+func (es EpochState) String() string {
+	return fmt.Sprintf("%d/%s", es.Epoch, es.Validators.String())
+}
+
 // Bootstrap restores abft's state from store.
 func (p *Orderer) Bootstrap(callback OrdererCallbacks) error {
 	if p.election != nil {
@@ -47,6 +52,18 @@ func (p *Orderer) Bootstrap(callback OrdererCallbacks) error {
 	// events reprocessing
 	_, err = p.bootstrapElection()
 	return err
+}
+
+// Reset switches epoch state to a new empty epoch.
+func (p *Orderer) Reset(epoch idx.Epoch, validators *pos.Validators) error {
+	p.store.applyGenesis(epoch, validators)
+	// reset internal epoch DB
+	err := p.resetEpochStore(epoch)
+	if err != nil {
+		return err
+	}
+	p.election.Reset(validators, FirstFrame)
+	return nil
 }
 
 func (p *Orderer) loadEpochDB() error {

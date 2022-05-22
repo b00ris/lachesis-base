@@ -7,7 +7,7 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 )
 
-// Events is a ordered slice of events.
+// TestEvents is a ordered slice of events.
 type TestEvents []*TestEvent
 
 // String returns human readable representation.
@@ -57,9 +57,9 @@ func (ee TestEvents) ByParents() (res TestEvents) {
 		unsorted[i] = e
 	}
 	sorted := ByParents(unsorted)
-	testSorted := make(TestEvents, len(ee))
+	res = make(TestEvents, len(ee))
 	for i, e := range sorted {
-		testSorted[i] = e.(*TestEvent)
+		res[i] = e.(*TestEvent)
 	}
 
 	return
