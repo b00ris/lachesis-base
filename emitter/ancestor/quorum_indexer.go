@@ -33,7 +33,7 @@ type QuorumIndexer struct {
 	diffMetricFn DiffMetricFn
 }
 
-func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis abft.Lachesis) *QuorumIndexer {
+func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis *abft.Lachesis) *QuorumIndexer {
 	return &QuorumIndexer{
 		globalMatrix:     NewMatrix(validators.Len(), validators.Len()),
 		globalMedianSeqs: make([]idx.Event, validators.Len()),
