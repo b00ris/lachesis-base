@@ -22,7 +22,7 @@ type QuorumIndexer struct {
 	dagi       DagIndex
 	validators *pos.Validators
 
-	lachesis abft.Lachesis
+	lachesis *abft.Lachesis
 
 	globalMatrix     Matrix
 	selfParentSeqs   []idx.Event
