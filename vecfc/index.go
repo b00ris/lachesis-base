@@ -32,7 +32,7 @@ type Index struct {
 	validators    *pos.Validators
 	validatorIdxs map[idx.ValidatorID]idx.Validator
 
-	getEvent func(hash.Event) dag.Event
+	GetEvent func(hash.Event) dag.Event
 
 	vecDb kvdb.Store
 	table struct {
@@ -97,7 +97,7 @@ func (vi *Index) initCaches() {
 // Reset resets buffers.
 func (vi *Index) Reset(validators *pos.Validators, db kvdb.Store, getEvent func(hash.Event) dag.Event) {
 	vi.Engine.Reset(validators, db, getEvent)
-	vi.getEvent = getEvent
+	vi.GetEvent = getEvent
 	vi.validators = validators
 	vi.validatorIdxs = validators.Idxs()
 	vi.cache.ForklessCause.Purge()

@@ -3,6 +3,7 @@ package adapters
 import (
 	"github.com/Fantom-foundation/lachesis-base/abft/dagidx"
 	"github.com/Fantom-foundation/lachesis-base/hash"
+	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 	"github.com/Fantom-foundation/lachesis-base/vecfc"
 )
@@ -37,4 +38,8 @@ type VectorToDagIndexer struct {
 
 func (v *VectorToDagIndexer) GetMergedHighestBefore(id hash.Event) dagidx.HighestBeforeSeq {
 	return VectorSeqToDagIndexSeq{v.Index.GetMergedHighestBefore(id)}
+}
+
+func (v *VectorToDagIndexer) GetEvent(id hash.Event) dag.Event {
+	return v.Index.GetEvent(id)
 }

@@ -499,7 +499,7 @@ func testForksDetected(vi *Index, head dag.Event) (cheaters map[idx.ValidatorID]
 		}
 		visited.Add(id)
 
-		e := vi.getEvent(id)
+		e := vi.GetEvent(id)
 		slot := eventSlot{
 			seq:     e.Seq(),
 			creator: e.Creator(),

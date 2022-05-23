@@ -89,7 +89,7 @@ func (p *IndexedLachesis) Bootstrap(callback lachesis.ConsensusCallbacks) error 
 			if base.EpochDBLoaded != nil {
 				base.EpochDBLoaded(epoch)
 			}
-			p.dagIndexer.Reset(p.store.GetValidators(), p.store.epochTable.VectorIndex, p.input.GetEvent)
+			p.dagIndexer.Reset(p.Store.GetValidators(), p.Store.epochTable.VectorIndex, p.input.GetEvent)
 		},
 	}
 	return p.Lachesis.BootstrapWithOrderer(callback, ordererCallbacks)

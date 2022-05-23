@@ -45,9 +45,9 @@ func (p *Orderer) Bootstrap(callback OrdererCallbacks) error {
 		return err
 	}
 	if p.callback.EpochDBLoaded != nil {
-		p.callback.EpochDBLoaded(p.store.GetEpoch())
+		p.callback.EpochDBLoaded(p.Store.GetEpoch())
 	}
-	p.election = election.New(p.store.GetValidators(), p.store.GetLastDecidedFrame()+1, p.dagIndex.ForklessCause, p.store.GetFrameRoots)
+	p.election = election.New(p.Store.GetValidators(), p.Store.GetLastDecidedFrame()+1, p.dagIndex.ForklessCause, p.Store.GetFrameRoots)
 
 	// events reprocessing
 	_, err = p.bootstrapElection()
@@ -56,7 +56,7 @@ func (p *Orderer) Bootstrap(callback OrdererCallbacks) error {
 
 // Reset switches epoch state to a new empty epoch.
 func (p *Orderer) Reset(epoch idx.Epoch, validators *pos.Validators) error {
-	p.store.applyGenesis(epoch, validators)
+	p.Store.applyGenesis(epoch, validators)
 	// reset internal epoch DB
 	err := p.resetEpochStore(epoch)
 	if err != nil {
@@ -67,5 +67,5 @@ func (p *Orderer) Reset(epoch idx.Epoch, validators *pos.Validators) error {
 }
 
 func (p *Orderer) loadEpochDB() error {
-	return p.store.openEpochDB(p.store.GetEpoch())
+	return p.Store.openEpochDB(p.Store.GetEpoch())
 }

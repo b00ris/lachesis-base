@@ -15,7 +15,7 @@ func (p *Orderer) onFrameDecided(frame idx.Frame, atropos hash.Event) (bool, err
 		newValidators = p.callback.ApplyAtropos(frame, atropos)
 	}
 
-	lastDecidedState := *p.store.GetLastDecidedState()
+	lastDecidedState := *p.Store.GetLastDecidedState()
 	if newValidators != nil {
 		lastDecidedState.LastDecidedFrame = FirstFrame - 1
 		err := p.sealEpoch(newValidators)
@@ -25,18 +25,18 @@ func (p *Orderer) onFrameDecided(frame idx.Frame, atropos hash.Event) (bool, err
 		p.election.Reset(newValidators, FirstFrame)
 	} else {
 		lastDecidedState.LastDecidedFrame = frame
-		p.election.Reset(p.store.GetValidators(), frame+1)
+		p.election.Reset(p.Store.GetValidators(), frame+1)
 	}
-	p.store.SetLastDecidedState(&lastDecidedState)
+	p.Store.SetLastDecidedState(&lastDecidedState)
 	return newValidators != nil, nil
 }
 
 func (p *Orderer) resetEpochStore(newEpoch idx.Epoch) error {
-	err := p.store.dropEpochDB()
+	err := p.Store.dropEpochDB()
 	if err != nil {
 		return err
 	}
-	err = p.store.openEpochDB(newEpoch)
+	err = p.Store.openEpochDB(newEpoch)
 	if err != nil {
 		return err
 	}
@@ -49,10 +49,10 @@ func (p *Orderer) resetEpochStore(newEpoch idx.Epoch) error {
 
 func (p *Orderer) sealEpoch(newValidators *pos.Validators) error {
 	// new PrevEpoch state
-	epochState := *p.store.GetEpochState()
+	epochState := *p.Store.GetEpochState()
 	epochState.Epoch++
 	epochState.Validators = newValidators
-	p.store.SetEpochState(&epochState)
+	p.Store.SetEpochState(&epochState)
 
 	return p.resetEpochStore(epochState.Epoch)
 }

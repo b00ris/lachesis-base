@@ -22,7 +22,7 @@ type DagIndex interface {
 // Use this structure if need a general-purpose consensus. Instead, use lower-level abft.Orderer.
 type Lachesis struct {
 	*Orderer
-	dagIndex      DagIndex
+	DagIndex      DagIndex
 	uniqueDirtyID uniqueID
 	callback      lachesis.ConsensusCallbacks
 }
@@ -31,7 +31,7 @@ type Lachesis struct {
 func NewLachesis(store *Store, input EventSource, dagIndex DagIndex, crit func(error), config Config) *Lachesis {
 	p := &Lachesis{
 		Orderer:  NewOrderer(store, input, dagIndex, crit, config),
-		dagIndex: dagIndex,
+		DagIndex: dagIndex,
 	}
 
 	return p
@@ -39,12 +39,12 @@ func NewLachesis(store *Store, input EventSource, dagIndex DagIndex, crit func(e
 
 func (p *Lachesis) confirmEvents(frame idx.Frame, atropos hash.Event, onEventConfirmed func(dag.Event)) error {
 	err := p.dfsSubgraph(atropos, func(e dag.Event) bool {
-		decidedFrame := p.store.GetEventConfirmedOn(e.ID())
+		decidedFrame := p.Store.GetEventConfirmedOn(e.ID())
 		if decidedFrame != 0 {
 			return false
 		}
 		// mark all the walked events as confirmed
-		p.store.SetEventConfirmedOn(e.ID(), frame)
+		p.Store.SetEventConfirmedOn(e.ID(), frame)
 		if onEventConfirmed != nil {
 			onEventConfirmed(e)
 		}
@@ -54,9 +54,9 @@ func (p *Lachesis) confirmEvents(frame idx.Frame, atropos hash.Event, onEventCon
 }
 
 func (p *Lachesis) applyAtropos(decidedFrame idx.Frame, atropos hash.Event) *pos.Validators {
-	atroposVecClock := p.dagIndex.GetMergedHighestBefore(atropos)
+	atroposVecClock := p.DagIndex.GetMergedHighestBefore(atropos)
 
-	validators := p.store.GetValidators()
+	validators := p.Store.GetValidators()
 	// cheaters are ordered deterministically
 	cheaters := make([]idx.ValidatorID, 0, validators.Len())
 	for creatorIdx, creator := range validators.SortedIDs() {
