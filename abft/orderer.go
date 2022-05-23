@@ -23,7 +23,7 @@ type OrdererDagIndex interface {
 type Orderer struct {
 	config Config
 	crit   func(error)
-	store  *Store
+	Store  *Store
 	input  EventSource
 
 	election *election.Election
@@ -38,7 +38,7 @@ type Orderer struct {
 func NewOrderer(store *Store, input EventSource, dagIndex OrdererDagIndex, crit func(error), config Config) *Orderer {
 	p := &Orderer{
 		config:   config,
-		store:    store,
+		Store:    store,
 		input:    input,
 		crit:     crit,
 		dagIndex: dagIndex,

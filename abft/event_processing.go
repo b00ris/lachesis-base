@@ -16,10 +16,10 @@ var (
 // returns error if event should be dropped
 func (p *Orderer) Build(e dag.MutableEvent) error {
 	// sanity check
-	if e.Epoch() != p.store.GetEpoch() {
+	if e.Epoch() != p.Store.GetEpoch() {
 		p.crit(errors.New("event has wrong epoch"))
 	}
-	if !p.store.GetValidators().Exists(e.Creator()) {
+	if !p.Store.GetValidators().Exists(e.Creator()) {
 		p.crit(errors.New("event wasn't created by an existing validator"))
 	}
 
@@ -57,7 +57,7 @@ func (p *Orderer) checkAndSaveEvent(e dag.Event) (error, idx.Frame) {
 	}
 
 	if selfParentFrame != frameIdx {
-		p.store.AddRoot(selfParentFrame, e)
+		p.Store.AddRoot(selfParentFrame, e)
 	}
 	return nil, selfParentFrame
 }
@@ -124,10 +124,10 @@ func (p *Orderer) bootstrapElection() (bool, error) {
 // This routine should be called after node startup, and after each decided frame.
 func (p *Orderer) processKnownRoots() (*election.Res, error) {
 	// iterate all the roots from LastDecidedFrame+1 to highest, call processRoot for each
-	lastDecidedFrame := p.store.GetLastDecidedFrame()
+	lastDecidedFrame := p.Store.GetLastDecidedFrame()
 	var decided *election.Res
 	for f := lastDecidedFrame + 1; ; f++ {
-		frameRoots := p.store.GetFrameRoots(f)
+		frameRoots := p.Store.GetFrameRoots(f)
 		for _, it := range frameRoots {
 			var err error
 			decided, err = p.election.ProcessRoot(it)
@@ -147,9 +147,9 @@ func (p *Orderer) processKnownRoots() (*election.Res, error) {
 
 // forklessCausedByQuorumOn returns true if event is forkless caused by 2/3W roots on specified frame
 func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
-	observedCounter := p.store.GetValidators().NewCounter()
+	observedCounter := p.Store.GetValidators().NewCounter()
 	// check "observing" prev roots only if called by creator, or if creator has marked that event as root
-	for _, it := range p.store.GetFrameRoots(f) {
+	for _, it := range p.Store.GetFrameRoots(f) {
 		if p.dagIndex.ForklessCause(e.ID(), it.ID) {
 			observedCounter.Count(it.Slot.Validator)
 		}

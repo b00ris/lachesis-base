@@ -5,6 +5,7 @@ import (
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"github.com/Fantom-foundation/lachesis-base/inter/pos"
 )
 
 type kv struct {
@@ -79,4 +80,61 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 		}
 	}
 	return yes.HasQuorum()
+}
+
+// +++TODO setup caching
+// func (vi *Index) ForklessCauseProgress(aID, bID hash.Event) bool {
+// 	if res, ok := vi.cache.ForklessCause.Get(kv{aID, bID}); ok {
+// 		return res.(bool)
+// 	}
+
+// 	vi.Engine.InitBranchesInfo()
+// 	res := vi.forklessCauseProgress(aID, bID)
+
+// 	vi.cache.ForklessCauseProgress.Add(kv{aID, bID}, res, 1)
+// 	return res
+// }
+
+func (vi *Index) ForklessCauseProgress(aID, bID hash.Event) *pos.WeightCounter {
+	yes := vi.validators.NewCounter()
+	// Get events by hash
+	a := vi.GetHighestBefore(aID)
+	if a == nil {
+		vi.crit(fmt.Errorf("Event A=%s not found", aID.String()))
+		return yes
+	}
+
+	// check A doesn't observe any forks from B
+	if vi.Engine.AtLeastOneFork() {
+		bBranchID := vi.Engine.GetEventBranchID(bID)
+		if a.Get(bBranchID).IsForkDetected() { // B is observed as cheater by A
+			return yes
+		}
+	}
+
+	// check A observes that {QUORUM} non-cheater-validators observe B
+	b := vi.GetLowestAfter(bID)
+	if b == nil {
+		vi.crit(fmt.Errorf("Event B=%s not found", bID.String()))
+		return yes
+	}
+
+	// calculate forkless causing using the indexes
+	branchIDs := vi.Engine.BranchesInfo().BranchIDCreatorIdxs
+	for branchIDint, creatorIdx := range branchIDs {
+		branchID := idx.Validator(branchIDint)
+
+		// bLowestAfter := vi.GetLowestAfterSeq_(bID, branchID)   // lowest event from creator on branchID, which observes B
+		bLowestAfter := b.Get(branchID)   // lowest event from creator on branchID, which observes B
+		aHighestBefore := a.Get(branchID) // highest event from creator, observed by A
+
+		// if lowest event from branchID which observes B <= highest from branchID observed by A
+		// then {highest from branchID observed by A} observes B
+		if bLowestAfter <= aHighestBefore.Seq && bLowestAfter != 0 && !aHighestBefore.IsForkDetected() {
+			// we may count the same creator multiple times (on different branches)!
+			// so not every call increases the counter
+			yes.CountByIdx(creatorIdx)
+		}
+	}
+	return yes
 }

@@ -13,6 +13,13 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/utils/wmedian"
 )
 
+type RootProgressMetrics struct {
+	CreatorFrame             idx.Frame
+	HeadFrame                idx.Frame
+	FCRoots                  map[hash.Event]bool
+	ForklessCauseProgressMap map[hash.Event]*pos.WeightCounter
+}
+
 type DagIndex interface {
 	dagidx.VectorClock
 }
@@ -21,6 +28,8 @@ type DiffMetricFn func(median, current, update idx.Event, validatorIdx idx.Valid
 type QuorumIndexer struct {
 	dagi       DagIndex
 	validators *pos.Validators
+
+	SelfParentEvent hash.Event
 
 	lachesis *abft.Lachesis
 
@@ -122,6 +131,40 @@ func (h *QuorumIndexer) recacheState() {
 	cache := NewMetricFnCache(h.GetMetricOf, 128)
 	h.searchStrategy = NewMetricStrategy(cache.GetMetricOf)
 	h.dirty = false
+}
+
+func (h *QuorumIndexer) GetMetricsOfRootProgress(head hash.Event) RootProgressMetrics {
+	// This function is indended to be used in the process of
+	// selecting event block parents from a set of head options.
+	// This function returns useful metrics for assessing
+	// how much a validator will progress toward producing a root when using head as a parent
+
+	var rootProgressMetrics RootProgressMetrics
+
+	// first check to see if head has produced a root by comparing its current frame with lastDecidedFrame
+	// if head has produced a new root, then selecting it as a parent guarantees creator will produce a new root, if it has not already
+
+	headFrame := h.dagi.GetEvent(head).Frame()
+	rootProgressMetrics.HeadFrame = headFrame
+	creatorFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
+	rootProgressMetrics.CreatorFrame = creatorFrame
+	// next calculate which previous roots id observes in its subgraph
+	// Lowest After is used to determine which validators know a root
+	rootProgressMetrics.ForklessCauseProgressMap = make(map[hash.Event]*pos.WeightCounter, h.validators.Len())
+
+	//+++QUESTION, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
+	for _, it := range h.lachesis.Store.GetFrameRoots(headFrame) {
+		// +++ TODO only loop over roots in head's subgraph?
+		rootProgressMetrics.ForklessCauseProgressMap[it.ID] = h.lachesis.DagIndex.ForklessCauseProgress(head, it.ID)
+		rootProgressMetrics.FCRoots[it.ID] = rootProgressMetrics.ForklessCauseProgressMap[it.ID].HasQuorum()
+	}
+
+	// return the following useful metrics
+	// 1) rootProgressMetrics.CreatorFrame and .HeadFrame: To check if head's frame is ahead of creator frame
+	// 2) rootProgressMetrics.FCRoots: Specifies which roots forkless cause head
+	// 3) rootProgressMetrics.ForklessCauseProgressMap: Progress of each root in forkless causing head
+
+	return rootProgressMetrics
 }
 
 func (h *QuorumIndexer) GetMetricOf(id hash.Event) Metric {
