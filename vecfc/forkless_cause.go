@@ -95,28 +95,58 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 // 	return res
 // }
 
-func (vi *Index) ForklessCauseProgress(aID, bID hash.Event) *pos.WeightCounter {
-	yes := vi.validators.NewCounter()
+func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads hash.Events) []*pos.WeightCounter {
+	// Used to find ForklessCause(a,b) if a selects c as a parent, d's are the already selected parents
+	// +++todo, fix error handling returns
+	headsFCProgress := make([]*pos.WeightCounter, len(heads)+1) // last entry will be for no head result
+
 	// Get events by hash
 	a := vi.GetHighestBefore(aID)
 	if a == nil {
 		vi.crit(fmt.Errorf("Event A=%s not found", aID.String()))
-		return yes
+		return headsFCProgress
+	}
+
+	c := make([]*HighestBeforeSeq, len(heads))
+	for i, _ := range heads {
+		c[i] = vi.GetHighestBefore(heads[i])
+		if c[i] == nil {
+			vi.crit(fmt.Errorf("Event Head=%s not found", heads[i].String()))
+			return headsFCProgress
+		}
+	}
+
+	d := make([]*HighestBeforeSeq, len(chosenHeads))
+	for i, _ := range chosenHeads {
+		d[i] = vi.GetHighestBefore(chosenHeads[i])
+		if d[i] == nil {
+			vi.crit(fmt.Errorf("Event Chosen Head=%s not found", chosenHeads[i].String()))
+			return headsFCProgress
+		}
 	}
 
 	// check A doesn't observe any forks from B
 	if vi.Engine.AtLeastOneFork() {
 		bBranchID := vi.Engine.GetEventBranchID(bID)
 		if a.Get(bBranchID).IsForkDetected() { // B is observed as cheater by A
-			return yes
+			return headsFCProgress
 		}
 	}
 
-	// check A observes that {QUORUM} non-cheater-validators observe B
+	// check D doesn't observe any forks from B
+	for i := 0; i < len(d); i++ {
+		if vi.Engine.AtLeastOneFork() {
+			bBranchID := vi.Engine.GetEventBranchID(bID)
+			if d[i].Get(bBranchID).IsForkDetected() { // B is observed as cheater by D
+				return headsFCProgress
+			}
+		}
+	}
+
 	b := vi.GetLowestAfter(bID)
 	if b == nil {
 		vi.crit(fmt.Errorf("Event B=%s not found", bID.String()))
-		return yes
+		return headsFCProgress
 	}
 
 	// calculate forkless causing using the indexes
@@ -125,16 +155,43 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event) *pos.WeightCounter {
 		branchID := idx.Validator(branchIDint)
 
 		// bLowestAfter := vi.GetLowestAfterSeq_(bID, branchID)   // lowest event from creator on branchID, which observes B
-		bLowestAfter := b.Get(branchID)   // lowest event from creator on branchID, which observes B
-		aHighestBefore := a.Get(branchID) // highest event from creator, observed by A
+		bLowestAfter := b.Get(branchID)  // lowest event from creator on branchID, which observes B
+		HighestBefore := a.Get(branchID) // highest event from creator, observed by A
 
-		// if lowest event from branchID which observes B <= highest from branchID observed by A
-		// then {highest from branchID observed by A} observes B
-		if bLowestAfter <= aHighestBefore.Seq && bLowestAfter != 0 && !aHighestBefore.IsForkDetected() {
+		IsForkDetected := HighestBefore.IsForkDetected()
+
+		for i := 0; i < len(d); i++ {
+			dHighestBefore := d[i].Get(branchID) // highest event from creator, observed by A
+			HighestBefore.Seq = maxEvent(HighestBefore.Seq, dHighestBefore.Seq)
+			IsForkDetected = IsForkDetected || dHighestBefore.IsForkDetected()
+		}
+
+		// first do forkless cause for no head (only selected heads and a)
+		if bLowestAfter <= HighestBefore.Seq && bLowestAfter != 0 && !IsForkDetected {
 			// we may count the same creator multiple times (on different branches)!
 			// so not every call increases the counter
-			yes.CountByIdx(creatorIdx)
+			headsFCProgress[len(headsFCProgress)-1].CountByIdx(creatorIdx)
+		}
+
+		// now do forkless cause for each head with selected heads and a
+		for i, _ := range heads {
+			cHighestBefore := c[i].Get(branchID)
+			cIsForkDetected := IsForkDetected || cHighestBefore.IsForkDetected()
+			cHighestBefore.Seq = maxEvent(HighestBefore.Seq, cHighestBefore.Seq)
+
+			if bLowestAfter <= cHighestBefore.Seq && bLowestAfter != 0 && !cIsForkDetected {
+				// we may count the same creator multiple times (on different branches)!
+				// so not every call increases the counter
+				headsFCProgress[i].CountByIdx(creatorIdx)
+			}
 		}
 	}
-	return yes
+	return headsFCProgress
+}
+
+func maxEvent(a idx.Event, b idx.Event) idx.Event {
+	if a > b {
+		return a
+	}
+	return b
 }
