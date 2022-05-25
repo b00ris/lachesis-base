@@ -2,7 +2,9 @@ package ancestor
 
 import (
 	"math"
+	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/abft"
 	"github.com/Fantom-foundation/lachesis-base/abft/dagidx"
@@ -13,11 +15,16 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/utils/wmedian"
 )
 
+type sortedRootProgressMetrics []RootProgressMetrics
+
 type RootProgressMetrics struct {
-	CreatorFrame             idx.Frame
-	HeadFrame                idx.Frame
-	FCRoots                  map[hash.Event]bool
-	ForklessCauseProgressMap map[hash.Event]*pos.WeightCounter
+	idx int
+	// head                  hash.Event
+	// CreatorFrame          idx.Frame
+	// HeadFrame             idx.Frame
+	newObservedRootWeight pos.WeightCounter
+	newFCWeight           pos.WeightCounter
+	newRootKnowledge      pos.Weight
 }
 
 type DagIndex interface {
@@ -32,12 +39,16 @@ type QuorumIndexer struct {
 	SelfParentEvent hash.Event
 
 	lachesis *abft.Lachesis
+	r        *rand.Rand
+
+	CreatorFrame idx.Frame
 
 	globalMatrix     Matrix
 	selfParentSeqs   []idx.Event
 	globalMedianSeqs []idx.Event
 	dirty            bool
 	searchStrategy   SearchStrategy
+	parentStrategy   SearchStrategy
 
 	diffMetricFn DiffMetricFn
 }
@@ -52,6 +63,7 @@ func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn Di
 		diffMetricFn:     diffMetricFn,
 		dirty:            true,
 		lachesis:         lachesis,
+		r:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -133,38 +145,134 @@ func (h *QuorumIndexer) recacheState() {
 	h.dirty = false
 }
 
-func (h *QuorumIndexer) GetMetricsOfRootProgress(head hash.Event) RootProgressMetrics {
+func (h *QuorumIndexer) Choose(selectedParents hash.Events, options hash.Events) int {
+	metrics := make([]RootProgressMetrics, len(options))
+	// first get metrics of each options
+	metrics = h.GetMetricsOfRootProgress(options, selectedParents) //should call GetMetricsofRootProgress
+	if metrics == nil {
+		// this occurs if all head options are at a previous frame, and thus cannot progress the production of a root in the current frame
+		// in this case return a random head
+		// +++todo, instead perhaps choose a head that will benefit other validators, or a head that is fast to communicate with (direct P2P peer?)
+		return h.r.Intn(len(options))
+	}
+	// now sort options based on metrics in order of importance
+	sort.Sort(sortedRootProgressMetrics(metrics))
+
+	// return the index of the option with the best metrics
+	// Note that if the frame of the creator combined with already selected heads
+	//+++todo, perhaps include a bias for low latency parents (i.e. P2P peers)
+	return metrics[0].idx
+}
+
+//below Len, Swap and Less are for implementing the inbuilt sort interface for RootProgressMetrics
+
+func (m sortedRootProgressMetrics) Len() int {
+	return len(m)
+}
+
+func (m sortedRootProgressMetrics) Swap(i, j int) {
+	m[i], m[j] = m[j], m[i]
+}
+
+func (m sortedRootProgressMetrics) Less(i, j int) bool {
+	// sort RootProgressMetrics based on each metric field
+	// if m[i].HeadFrame != m[j].HeadFrame {
+	// 	return m[i].HeadFrame > m[j].HeadFrame
+	// }
+
+	if m[i].newFCWeight.Sum() != m[j].newFCWeight.Sum() {
+		return m[i].newFCWeight.Sum() > m[j].newFCWeight.Sum()
+	}
+
+	if m[i].newRootKnowledge != m[j].newRootKnowledge {
+		return m[i].newRootKnowledge > m[j].newRootKnowledge
+	}
+
+	if m[i].newObservedRootWeight.Sum() != m[j].newObservedRootWeight.Sum() {
+		return m[i].newObservedRootWeight.Sum() > m[j].newObservedRootWeight.Sum()
+	}
+	// +++todo for a large network, it is likely that these metrics are out of date because new event blocks have not been received
+	// it may be beneficial to select old heads, based on the inference that forcing a sync with an old head will discover a new event block that has good progress
+	return true
+}
+
+func newRootProgressMetrics(headIdx int) RootProgressMetrics {
+	var metric RootProgressMetrics
+	metric.newRootKnowledge = 0
+	metric.idx = headIdx
+
+	return metric
+}
+
+func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads hash.Events) []RootProgressMetrics {
 	// This function is indended to be used in the process of
 	// selecting event block parents from a set of head options.
 	// This function returns useful metrics for assessing
-	// how much a validator will progress toward producing a root when using head as a parent
+	// how much a validator will progress toward producing a root when using head as a parent.
+	// creator denotes the validator creating a new event block.
+	// chosenHeads are heads that have already been selected
+	// head denotes the event block of another validator that is being considered as a potential parent.
 
-	var rootProgressMetrics RootProgressMetrics
-
-	// first check to see if head has produced a root by comparing its current frame with lastDecidedFrame
-	// if head has produced a new root, then selecting it as a parent guarantees creator will produce a new root, if it has not already
-
-	headFrame := h.dagi.GetEvent(head).Frame()
-	rootProgressMetrics.HeadFrame = headFrame
-	creatorFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
-	rootProgressMetrics.CreatorFrame = creatorFrame
-	// next calculate which previous roots id observes in its subgraph
-	// Lowest After is used to determine which validators know a root
-	rootProgressMetrics.ForklessCauseProgressMap = make(map[hash.Event]*pos.WeightCounter, h.validators.Len())
-
-	//+++QUESTION, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
-	for _, it := range h.lachesis.Store.GetFrameRoots(headFrame) {
-		// +++ TODO only loop over roots in head's subgraph?
-		rootProgressMetrics.ForklessCauseProgressMap[it.ID] = h.lachesis.DagIndex.ForklessCauseProgress(head, it.ID)
-		rootProgressMetrics.FCRoots[it.ID] = rootProgressMetrics.ForklessCauseProgressMap[it.ID].HasQuorum()
+	// find max frame number of self event block, and chosen heads
+	currentFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
+	for _, head := range chosenHeads {
+		currentFrame = maxFrame(currentFrame, h.dagi.GetEvent(head).Frame())
 	}
 
-	// return the following useful metrics
-	// 1) rootProgressMetrics.CreatorFrame and .HeadFrame: To check if head's frame is ahead of creator frame
-	// 2) rootProgressMetrics.FCRoots: Specifies which roots forkless cause head
-	// 3) rootProgressMetrics.ForklessCauseProgressMap: Progress of each root in forkless causing head
+	// find frame number of each head, and max frame number
+	var maxHeadFrame idx.Frame = currentFrame
+	headFrame := make([]idx.Frame, len(heads))
 
+	for i, head := range heads {
+		headFrame[i] = h.dagi.GetEvent(head).Frame()
+		if headFrame[i] > maxHeadFrame {
+			maxHeadFrame = headFrame[i]
+		}
+	}
+
+	// only retain heads with max frame number
+	var rootProgressMetrics []RootProgressMetrics
+	var maxHeads hash.Events
+	for i, head := range heads {
+		if headFrame[i] >= maxHeadFrame {
+			rootProgressMetrics = append(rootProgressMetrics, newRootProgressMetrics(i))
+			maxHeads = append(maxHeads, head)
+		}
+	}
+
+	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
+	//+++todo, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
+	for _, root := range maxFrameRoots {
+		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, maxHeads, chosenHeads)
+
+		currentFCProgress := FCProgress[len(FCProgress)-1]
+		for i, _ := range maxHeads {
+			// Below metrics are computed in order of importance (most important first)
+			if FCProgress[i].HasQuorum() && !currentFCProgress.HasQuorum() {
+				// This means the root forkless causes the creator when head is a parent, but does not forkless cause without the head
+				rootProgressMetrics[i].newFCWeight.Count(root.Slot.Validator)
+			}
+
+			if !FCProgress[i].HasQuorum() {
+				// if the root does not forkless cause even without the head, add improvement head makes toward forkless cause
+				rootProgressMetrics[i].newRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
+
+				if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
+					// this means that creator with head parent observes the root, but creator on its own does not
+					// i.e. a new root is observed via the head
+					rootProgressMetrics[i].newObservedRootWeight.Count(root.Slot.Validator)
+				}
+			}
+		}
+	}
 	return rootProgressMetrics
+}
+
+func maxFrame(a idx.Frame, b idx.Frame) idx.Frame {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (h *QuorumIndexer) GetMetricOf(id hash.Event) Metric {
