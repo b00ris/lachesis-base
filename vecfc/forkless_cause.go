@@ -82,23 +82,10 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 	return yes.HasQuorum()
 }
 
-// +++TODO setup caching
-// func (vi *Index) ForklessCauseProgress(aID, bID hash.Event) bool {
-// 	if res, ok := vi.cache.ForklessCause.Get(kv{aID, bID}); ok {
-// 		return res.(bool)
-// 	}
-
-// 	vi.Engine.InitBranchesInfo()
-// 	res := vi.forklessCauseProgress(aID, bID)
-
-// 	vi.cache.ForklessCauseProgress.Add(kv{aID, bID}, res, 1)
-// 	return res
-// }
-
 func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads hash.Events) []*pos.WeightCounter {
 	// Used to find ForklessCause(a,b) if a selects c as a parent, d's are the already selected parents
 	// +++todo, fix error handling returns
-	headsFCProgress := make([]*pos.WeightCounter, len(heads)+1) // last entry will be for no head result
+	headsFCProgress := make([]*pos.WeightCounter, len(heads)+1) // last entry will be for the result without any new head
 
 	// Get events by hash
 	a := vi.GetHighestBefore(aID)
@@ -149,6 +136,10 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads h
 		return headsFCProgress
 	}
 
+	for i, _ := range headsFCProgress {
+		headsFCProgress[i] = vi.validators.NewCounter()
+	}
+
 	// calculate forkless causing using the indexes
 	branchIDs := vi.Engine.BranchesInfo().BranchIDCreatorIdxs
 	for branchIDint, creatorIdx := range branchIDs {
@@ -160,7 +151,7 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads h
 
 		IsForkDetected := HighestBefore.IsForkDetected()
 
-		for i := 0; i < len(d); i++ {
+		for i, _ := range chosenHeads {
 			dHighestBefore := d[i].Get(branchID) // highest event from creator, observed by A
 			HighestBefore.Seq = maxEvent(HighestBefore.Seq, dHighestBefore.Seq)
 			IsForkDetected = IsForkDetected || dHighestBefore.IsForkDetected()
@@ -172,9 +163,9 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads h
 			// so not every call increases the counter
 			headsFCProgress[len(headsFCProgress)-1].CountByIdx(creatorIdx)
 		}
-
 		// now do forkless cause for each head with selected heads and a
 		for i, _ := range heads {
+			// fmt.Println("c[i]", c[i])
 			cHighestBefore := c[i].Get(branchID)
 			cIsForkDetected := IsForkDetected || cHighestBefore.IsForkDetected()
 			cHighestBefore.Seq = maxEvent(HighestBefore.Seq, cHighestBefore.Seq)

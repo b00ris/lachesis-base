@@ -18,7 +18,7 @@ type (
 		validators Validators
 		already    []bool // idx.Validator -> bool
 
-		quorum Weight
+		Quorum Weight
 		sum    Weight
 	}
 )
@@ -31,7 +31,7 @@ func (vv Validators) NewCounter() *WeightCounter {
 func newWeightCounter(vv Validators) *WeightCounter {
 	return &WeightCounter{
 		validators: vv,
-		quorum:     vv.Quorum(),
+		Quorum:     vv.Quorum(),
 		already:    make([]bool, vv.Len()),
 		sum:        0,
 	}
@@ -56,7 +56,7 @@ func (s *WeightCounter) CountByIdx(validatorIdx idx.Validator) bool {
 
 // HasQuorum achieved.
 func (s *WeightCounter) HasQuorum() bool {
-	return s.sum >= s.quorum
+	return s.sum >= s.Quorum
 }
 
 // Sum of counted weights.

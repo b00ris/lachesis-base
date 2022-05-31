@@ -33,10 +33,11 @@ type DagIndex interface {
 type DiffMetricFn func(median, current, update idx.Event, validatorIdx idx.Validator) Metric
 
 type QuorumIndexer struct {
-	dagi       DagIndex
+	Dagi       DagIndex
 	validators *pos.Validators
 
-	SelfParentEvent hash.Event
+	SelfParentEvent     hash.Event
+	SelfParentEventFlag bool
 
 	lachesis *abft.Lachesis
 	r        *rand.Rand
@@ -48,22 +49,22 @@ type QuorumIndexer struct {
 	globalMedianSeqs []idx.Event
 	dirty            bool
 	searchStrategy   SearchStrategy
-	parentStrategy   SearchStrategy
 
 	diffMetricFn DiffMetricFn
 }
 
 func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis *abft.Lachesis) *QuorumIndexer {
 	return &QuorumIndexer{
-		globalMatrix:     NewMatrix(validators.Len(), validators.Len()),
-		globalMedianSeqs: make([]idx.Event, validators.Len()),
-		selfParentSeqs:   make([]idx.Event, validators.Len()),
-		dagi:             dagi,
-		validators:       validators,
-		diffMetricFn:     diffMetricFn,
-		dirty:            true,
-		lachesis:         lachesis,
-		r:                rand.New(rand.NewSource(time.Now().UnixNano())),
+		globalMatrix:        NewMatrix(validators.Len(), validators.Len()),
+		globalMedianSeqs:    make([]idx.Event, validators.Len()),
+		selfParentSeqs:      make([]idx.Event, validators.Len()),
+		Dagi:                dagi,
+		validators:          validators,
+		diffMetricFn:        diffMetricFn,
+		dirty:               true,
+		lachesis:            lachesis,
+		r:                   rand.New(rand.NewSource(time.Now().UnixNano())),
+		SelfParentEventFlag: false,
 	}
 }
 
@@ -109,7 +110,7 @@ func (ws weightedSeq) Weight() pos.Weight {
 }
 
 func (h *QuorumIndexer) ProcessEvent(event dag.Event, selfEvent bool) {
-	vecClock := h.dagi.GetMergedHighestBefore(event.ID())
+	vecClock := h.Dagi.GetMergedHighestBefore(event.ID())
 	creatorIdx := h.validators.GetIdx(event.Creator())
 	// update global matrix
 	for validatorIdx := idx.Validator(0); validatorIdx < h.validators.Len(); validatorIdx++ {
@@ -145,10 +146,10 @@ func (h *QuorumIndexer) recacheState() {
 	h.dirty = false
 }
 
-func (h *QuorumIndexer) Choose(selectedParents hash.Events, options hash.Events) int {
+func (h *QuorumIndexer) Choose(existingParents hash.Events, options hash.Events) int {
 	metrics := make([]RootProgressMetrics, len(options))
 	// first get metrics of each options
-	metrics = h.GetMetricsOfRootProgress(options, selectedParents) //should call GetMetricsofRootProgress
+	metrics = h.GetMetricsOfRootProgress(options, existingParents) //should call GetMetricsofRootProgress
 	if metrics == nil {
 		// this occurs if all head options are at a previous frame, and thus cannot progress the production of a root in the current frame
 		// in this case return a random head
@@ -191,16 +192,15 @@ func (m sortedRootProgressMetrics) Less(i, j int) bool {
 	if m[i].newObservedRootWeight.Sum() != m[j].newObservedRootWeight.Sum() {
 		return m[i].newObservedRootWeight.Sum() > m[j].newObservedRootWeight.Sum()
 	}
-	// +++todo for a large network, it is likely that these metrics are out of date because new event blocks have not been received
-	// it may be beneficial to select old heads, based on the inference that forcing a sync with an old head will discover a new event block that has good progress
 	return true
 }
 
-func newRootProgressMetrics(headIdx int) RootProgressMetrics {
+func (h *QuorumIndexer) newRootProgressMetrics(headIdx int) RootProgressMetrics {
 	var metric RootProgressMetrics
 	metric.newRootKnowledge = 0
 	metric.idx = headIdx
-
+	metric.newObservedRootWeight = *h.validators.NewCounter()
+	metric.newFCWeight = *h.validators.NewCounter()
 	return metric
 }
 
@@ -214,17 +214,14 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 	// head denotes the event block of another validator that is being considered as a potential parent.
 
 	// find max frame number of self event block, and chosen heads
-	currentFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
-	for _, head := range chosenHeads {
-		currentFrame = maxFrame(currentFrame, h.dagi.GetEvent(head).Frame())
-	}
+	currentFrame := h.Dagi.GetEvent(*&h.SelfParentEvent).Frame()
 
 	// find frame number of each head, and max frame number
 	var maxHeadFrame idx.Frame = currentFrame
 	headFrame := make([]idx.Frame, len(heads))
 
 	for i, head := range heads {
-		headFrame[i] = h.dagi.GetEvent(head).Frame()
+		headFrame[i] = h.Dagi.GetEvent(head).Frame()
 		if headFrame[i] > maxHeadFrame {
 			maxHeadFrame = headFrame[i]
 		}
@@ -235,10 +232,11 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 	var maxHeads hash.Events
 	for i, head := range heads {
 		if headFrame[i] >= maxHeadFrame {
-			rootProgressMetrics = append(rootProgressMetrics, newRootProgressMetrics(i))
+			rootProgressMetrics = append(rootProgressMetrics, h.newRootProgressMetrics(i))
 			maxHeads = append(maxHeads, head)
 		}
 	}
+	// +++ToDo only retain chosenHeads with max frame number
 
 	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
 	//+++todo, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
@@ -254,12 +252,12 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 			}
 
 			if !FCProgress[i].HasQuorum() {
-				// if the root does not forkless cause even without the head, add improvement head makes toward forkless cause
+				// if the root does not forkless cause even with the head, add improvement head makes toward forkless cause
 				rootProgressMetrics[i].newRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
 
 				if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
 					// this means that creator with head parent observes the root, but creator on its own does not
-					// i.e. a new root is observed via the head
+					// i.e. this is a new root observed via the head
 					rootProgressMetrics[i].newObservedRootWeight.Count(root.Slot.Validator)
 				}
 			}
@@ -279,7 +277,7 @@ func (h *QuorumIndexer) GetMetricOf(id hash.Event) Metric {
 	if h.dirty {
 		h.recacheState()
 	}
-	vecClock := h.dagi.GetMergedHighestBefore(id)
+	vecClock := h.Dagi.GetMergedHighestBefore(id)
 	var metric Metric
 	for validatorIdx := idx.Validator(0); validatorIdx < h.validators.Len(); validatorIdx++ {
 		update := seqOf(vecClock.Get(validatorIdx))
