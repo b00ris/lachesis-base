@@ -27,20 +27,27 @@ type RootProgressMetrics struct {
 	newRootKnowledge      pos.Weight
 }
 
+type MetricStats struct {
+	expMovAv  float64 // exponential moving average
+	expMovVar float64 // exponential moving variance
+	expCoeff  float64 // exponential constant
+}
+
 type DagIndex interface {
 	dagidx.VectorClock
 }
 type DiffMetricFn func(median, current, update idx.Event, validatorIdx idx.Validator) Metric
 
 type QuorumIndexer struct {
-	Dagi       DagIndex
+	dagi       DagIndex
 	validators *pos.Validators
 
 	SelfParentEvent     hash.Event
 	SelfParentEventFlag bool
 
-	lachesis *abft.Lachesis
-	r        *rand.Rand
+	lachesis    *abft.Lachesis
+	r           *rand.Rand
+	metricStats MetricStats
 
 	CreatorFrame idx.Frame
 
@@ -53,12 +60,20 @@ type QuorumIndexer struct {
 	diffMetricFn DiffMetricFn
 }
 
+func NewMetricStats() MetricStats {
+	return MetricStats{
+		expMovAv:  0,
+		expMovVar: 0,
+		expCoeff:  0.01,
+	}
+}
+
 func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis *abft.Lachesis) *QuorumIndexer {
 	return &QuorumIndexer{
 		globalMatrix:        NewMatrix(validators.Len(), validators.Len()),
 		globalMedianSeqs:    make([]idx.Event, validators.Len()),
 		selfParentSeqs:      make([]idx.Event, validators.Len()),
-		Dagi:                dagi,
+		dagi:                dagi,
 		validators:          validators,
 		diffMetricFn:        diffMetricFn,
 		dirty:               true,
@@ -110,7 +125,7 @@ func (ws weightedSeq) Weight() pos.Weight {
 }
 
 func (h *QuorumIndexer) ProcessEvent(event dag.Event, selfEvent bool) {
-	vecClock := h.Dagi.GetMergedHighestBefore(event.ID())
+	vecClock := h.dagi.GetMergedHighestBefore(event.ID())
 	creatorIdx := h.validators.GetIdx(event.Creator())
 	// update global matrix
 	for validatorIdx := idx.Validator(0); validatorIdx < h.validators.Len(); validatorIdx++ {
@@ -214,14 +229,14 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 	// head denotes the event block of another validator that is being considered as a potential parent.
 
 	// find max frame number of self event block, and chosen heads
-	currentFrame := h.Dagi.GetEvent(*&h.SelfParentEvent).Frame()
+	currentFrame := h.dagi.GetEvent(*&h.SelfParentEvent).Frame()
 
 	// find frame number of each head, and max frame number
 	var maxHeadFrame idx.Frame = currentFrame
 	headFrame := make([]idx.Frame, len(heads))
 
 	for i, head := range heads {
-		headFrame[i] = h.Dagi.GetEvent(head).Frame()
+		headFrame[i] = h.dagi.GetEvent(head).Frame()
 		if headFrame[i] > maxHeadFrame {
 			maxHeadFrame = headFrame[i]
 		}
@@ -273,11 +288,123 @@ func maxFrame(a idx.Frame, b idx.Frame) idx.Frame {
 	return b
 }
 
+func (h *QuorumIndexer) GetTimingMetric(chosenHeads hash.Events) Metric {
+	// Returns a metric between [0,1) for how much an event block with given chosenHeads
+	// will advance the DAG. This can be used in determining if an event block should be created,
+	// or if the validator should wait until it can progress the DAG further via choosing better heads.
+
+	var prevFramePrevEventRootKnowledge pos.Weight = 0
+	var prevFrameNewEventRootKnowledge pos.Weight = 0
+
+	var newFramePrevEventRootKnowledge pos.Weight = 0
+	var newFrameNewEventRootKnowledge pos.Weight = 0
+
+	var metric float64
+
+	prevFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
+	newFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		newFrame = maxFrame(newFrame, h.dagi.GetEvent(head).Frame())
+	}
+
+	if prevFrame < newFrame {
+		// the event block will become a root, and move to the next frame
+		// check how far from quorum the previous event block is
+		prevRoots := h.lachesis.Store.GetFrameRoots(prevFrame)
+		for _, root := range prevRoots {
+			prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil)
+			rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+			rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+			progress := prevFCProgress[0].Sum()
+			if progress > prevFCProgress[0].Quorum {
+				progress = prevFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+			}
+			prevFramePrevEventRootKnowledge += rootStake * progress
+
+			newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads)
+
+			progress = newFCProgress[0].Sum()
+			// if progress > newFCProgress[0].Quorum {
+			// 	progress = newFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+			// }
+			prevFrameNewEventRootKnowledge += rootStake * progress
+		}
+		floatNew := float64(prevFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight()) * float64(h.validators.TotalWeight()))
+		floatPrev := float64(prevFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight()) * float64(h.validators.TotalWeight()))
+		metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
+	}
+
+	// Check progress in current frame
+	newRoots := h.lachesis.Store.GetFrameRoots(newFrame)
+	for _, root := range newRoots {
+		prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil)
+		rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+		progress := prevFCProgress[0].Sum()
+		// if progress > prevFCProgress[0].Quorum {
+		// 	progress = prevFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+		// }
+		newFramePrevEventRootKnowledge += rootStake * progress
+
+		newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads)
+
+		progress = newFCProgress[0].Sum()
+		if progress > newFCProgress[0].Quorum {
+			progress = newFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+		}
+		newFrameNewEventRootKnowledge += rootStake * progress
+	}
+
+	floatNew := float64(newFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight())) * float64(h.validators.TotalWeight())
+	floatPrev := float64(newFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight())) * float64(h.validators.TotalWeight())
+
+	// if root knowledge grows (approximately) exponentially with frame sequence number, then the log (or number of orders of magnitude)
+	// difference between events shoudl be roughly constant, independent of where the new and prev frames are in the frame sequence
+	// (e.g. early or late in the frame)
+	metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
+	// For the purposes of producing a metric in the range [0,1] this centers the metric distribution to mean = 1, and standard deviation 0.5
+	// if the metric data are normally distributed then about 84% of adjustedMetrics will be > 0.5
+	adjustedMetric := (metric - h.metricStats.expMovAv + 1) * (0.5 / math.Sqrt(h.metricStats.expMovVar))
+	if adjustedMetric > 1 {
+		// any above average result has value 1
+		adjustedMetric = 1
+	}
+	if adjustedMetric < 0 {
+		// minimum value is 0
+		adjustedMetric = 0
+	}
+
+	// Collect statistics on the metric, so that the size of any metric can be compard to past distribution.
+	// commput the deviation from the mean, divided by standard deviation, i.e. (metric - mean(metric))/std(metric)
+	// The data may be non-stationary over time, so we can use an exponential moving average, and moving variance
+	h.updateMetricStats(metric) // +++TODO should only adjust this when the event is actually emitted? Not just when calculating
+
+	return Metric(adjustedMetric)
+}
+
+func (h *QuorumIndexer) updateMetricStats(metric float64) {
+
+	if h.metricStats.expMovAv == 0 {
+		h.metricStats.expMovAv = metric
+	} else {
+		h.metricStats.expMovAv = h.metricStats.expCoeff*metric + (1-h.metricStats.expCoeff)*h.metricStats.expMovAv
+	}
+	deviation := metric - h.metricStats.expMovAv
+	if h.metricStats.expMovVar == 0 {
+		h.metricStats.expMovVar = deviation * deviation
+	} else {
+		h.metricStats.expMovAv = h.metricStats.expCoeff*deviation*deviation + (1-h.metricStats.expCoeff)*h.metricStats.expMovVar
+	}
+
+}
+
 func (h *QuorumIndexer) GetMetricOf(id hash.Event) Metric {
 	if h.dirty {
 		h.recacheState()
 	}
-	vecClock := h.Dagi.GetMergedHighestBefore(id)
+	vecClock := h.dagi.GetMergedHighestBefore(id)
 	var metric Metric
 	for validatorIdx := idx.Validator(0); validatorIdx < h.validators.Len(); validatorIdx++ {
 		update := seqOf(vecClock.Get(validatorIdx))
