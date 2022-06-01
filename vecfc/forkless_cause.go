@@ -83,7 +83,7 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 }
 
 func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads hash.Events) []*pos.WeightCounter {
-	// Used to find ForklessCause(a,b) if a selects c as a parent, d's are the already selected parents
+	// For each head in heads, find ForklessCause(a,b) if a head is selected as a parent for a, chosenheads are the already selected parents
 	// +++todo, fix error handling returns
 	headsFCProgress := make([]*pos.WeightCounter, len(heads)+1) // last entry will be for the result without any new head
 
@@ -165,7 +165,6 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads h
 		}
 		// now do forkless cause for each head with selected heads and a
 		for i, _ := range heads {
-			// fmt.Println("c[i]", c[i])
 			cHighestBefore := c[i].Get(branchID)
 			cIsForkDetected := IsForkDetected || cHighestBefore.IsForkDetected()
 			cHighestBefore.Seq = maxEvent(HighestBefore.Seq, cHighestBefore.Seq)
