@@ -94,12 +94,12 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 	for _, _lch := range lchs {
 		lch := _lch // capture
 		lch.applyBlock = func(block *lachesis.Block) *pos.Validators {
-			if lch.store.GetLastDecidedFrame()+1 == idx.Frame(maxEpochBlocks) {
+			if lch.Store.GetLastDecidedFrame()+1 == idx.Frame(maxEpochBlocks) {
 				// seal epoch
 				if mutateWeights {
-					return mutateValidators(lch.store.GetValidators())
+					return mutateValidators(lch.Store.GetValidators())
 				}
-				return lch.store.GetValidators()
+				return lch.Store.GetValidators()
 			}
 			return nil
 		}
@@ -120,10 +120,10 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 					lchs[GENERATOR].Process(e))
 
 				ordered = append(ordered, e)
-				epochStates[lchs[GENERATOR].store.GetEpoch()] = lchs[GENERATOR].store.GetEpochState()
+				epochStates[lchs[GENERATOR].Store.GetEpoch()] = lchs[GENERATOR].Store.GetEpochState()
 			},
 			Build: func(e dag.MutableEvent, name string) error {
-				if epoch != lchs[GENERATOR].store.GetEpoch() {
+				if epoch != lchs[GENERATOR].Store.GetEpoch() {
 					return errors.New("epoch already sealed, skip")
 				}
 				e.SetEpoch(epoch)
@@ -159,7 +159,7 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 			store := NewMemStore()
 			// copy prev DB into new one
 			{
-				it := prev.store.mainDB.NewIterator(nil, nil)
+				it := prev.Store.mainDB.NewIterator(nil, nil)
 				for it.Next() {
 					assertar.NoError(store.mainDB.Put(it.Key(), it.Value()))
 				}
@@ -167,13 +167,13 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 			}
 			restartEpochDB := memorydb.New()
 			{
-				it := prev.store.epochDB.NewIterator(nil, nil)
+				it := prev.Store.epochDB.NewIterator(nil, nil)
 				for it.Next() {
 					assertar.NoError(restartEpochDB.Put(it.Key(), it.Value()))
 				}
 				it.Release()
 			}
-			restartEpoch := prev.store.GetEpoch()
+			restartEpoch := prev.Store.GetEpoch()
 			store.getEpochDB = func(epoch idx.Epoch) kvdb.DropableStore {
 				if epoch == restartEpoch {
 					return restartEpochDB
@@ -187,7 +187,7 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 			lchs[RESTORED].IndexedLachesis = restored
 		}
 
-		if !assertar.Equal(e.Epoch(), lchs[EXPECTED].store.GetEpoch()) {
+		if !assertar.Equal(e.Epoch(), lchs[EXPECTED].Store.GetEpoch()) {
 			break
 		}
 		inputs[EXPECTED].SetEvent(e)
@@ -210,9 +210,9 @@ func testRestartAndReset(t *testing.T, weights []pos.Weight, mutateWeights bool,
 
 func compareStates(assertar *assert.Assertions, expected, restored *TestLachesis) {
 	assertar.Equal(
-		*(expected.store.GetLastDecidedState()), *(restored.store.GetLastDecidedState()))
+		*(expected.Store.GetLastDecidedState()), *(restored.Store.GetLastDecidedState()))
 	assertar.Equal(
-		expected.store.GetEpochState().String(), restored.store.GetEpochState().String())
+		expected.Store.GetEpochState().String(), restored.Store.GetEpochState().String())
 	// check last block
 	if len(expected.blocks) != 0 {
 		assertar.Equal(expected.lastBlock, restored.lastBlock)

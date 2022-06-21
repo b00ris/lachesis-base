@@ -277,7 +277,7 @@ func testSpecialNamedRoots(t *testing.T, scheme string) {
 				lch.Process(e))
 		},
 		Build: func(e dag.MutableEvent, name string) error {
-			e.SetEpoch(lch.store.GetEpoch())
+			e.SetEpoch(lch.Store.GetEpoch())
 			return lch.Build(e)
 		},
 	})
