@@ -90,12 +90,12 @@ func testLachesisRandomAndReset(t *testing.T, weights []pos.Weight, mutateWeight
 	for _, _lch := range lchs {
 		lch := _lch // capture
 		lch.applyBlock = func(block *lachesis.Block) *pos.Validators {
-			if lch.store.GetLastDecidedFrame()+1 == idx.Frame(maxEpochBlocks) {
+			if lch.Store.GetLastDecidedFrame()+1 == idx.Frame(maxEpochBlocks) {
 				// seal epoch
 				if mutateWeights {
-					return mutateValidators(lch.store.GetValidators())
+					return mutateValidators(lch.Store.GetValidators())
 				}
-				return lch.store.GetValidators()
+				return lch.Store.GetValidators()
 			}
 			return nil
 		}
@@ -117,17 +117,17 @@ func testLachesisRandomAndReset(t *testing.T, weights []pos.Weight, mutateWeight
 				inputs[0].SetEvent(e)
 				assertar.NoError(
 					lchs[0].Process(e))
-				epochStates[lchs[0].store.GetEpoch()] = lchs[0].store.GetEpochState()
+				epochStates[lchs[0].Store.GetEpoch()] = lchs[0].Store.GetEpochState()
 			},
 			Build: func(e dag.MutableEvent, name string) error {
-				if epoch != lchs[0].store.GetEpoch() {
+				if epoch != lchs[0].Store.GetEpoch() {
 					return errors.New("epoch already sealed, skip")
 				}
 				e.SetEpoch(epoch)
 				return lchs[0].Build(e)
 			},
 		})
-		if lchs[0].store.GetEpoch() != epoch+1 {
+		if lchs[0].Store.GetEpoch() != epoch+1 {
 			assertar.Fail("epoch wasn't sealed", epoch)
 		}
 	}
@@ -147,11 +147,11 @@ func testLachesisRandomAndReset(t *testing.T, weights []pos.Weight, mutateWeight
 				inputs[i].SetEvent(e)
 				assertar.NoError(
 					lchs[i].Process(e))
-				if lchs[i].store.GetEpoch() != epoch {
+				if lchs[i].Store.GetEpoch() != epoch {
 					break
 				}
 			}
-			if lchs[i].store.GetEpoch() != epoch+1 {
+			if lchs[i].Store.GetEpoch() != epoch+1 {
 				assertar.Fail("epoch wasn't sealed", epoch)
 			}
 		}
@@ -181,10 +181,10 @@ func compareResults(t *testing.T, lchs []*TestLachesis) {
 		for j := i + 1; j < len(lchs); j++ {
 			lch1 := lchs[j]
 
-			assertar.Equal(*(lchs[j].store.GetLastDecidedState()), *(lchs[i].store.GetLastDecidedState()))
-			assertar.Equal(*(lchs[j].store.GetEpochState()), *(lchs[i].store.GetEpochState()))
+			assertar.Equal(*(lchs[j].Store.GetLastDecidedState()), *(lchs[i].Store.GetLastDecidedState()))
+			assertar.Equal(*(lchs[j].Store.GetEpochState()), *(lchs[i].Store.GetEpochState()))
 
-			for e := idx.Epoch(1); e <= lch0.store.GetEpoch(); e++ {
+			for e := idx.Epoch(1); e <= lch0.Store.GetEpoch(); e++ {
 				both := lch0.epochBlocks[e]
 				if both > lch1.epochBlocks[e] {
 					both = lch1.epochBlocks[e]

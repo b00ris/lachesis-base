@@ -1,219 +1,277 @@
 package ancestor
 
-import (
-	"sort"
-	"strconv"
-	"strings"
-	"testing"
+// import (
+// 	"crypto/sha256"
+// 	"fmt"
+// 	"testing"
+// 	"time"
 
-	"github.com/stretchr/testify/assert"
+// 	"github.com/Fantom-foundation/lachesis-base/abft"
+// 	"github.com/Fantom-foundation/lachesis-base/hash"
+// 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
+// 	"github.com/Fantom-foundation/lachesis-base/inter/dag/tdag"
+// 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+// 	"github.com/Fantom-foundation/lachesis-base/inter/pos"
+// )
 
-	"github.com/Fantom-foundation/lachesis-base/hash"
-	"github.com/Fantom-foundation/lachesis-base/inter/dag"
-	"github.com/Fantom-foundation/lachesis-base/inter/dag/tdag"
-	"github.com/Fantom-foundation/lachesis-base/inter/idx"
-	"github.com/Fantom-foundation/lachesis-base/inter/pos"
-	"github.com/Fantom-foundation/lachesis-base/kvdb/memorydb"
-	"github.com/Fantom-foundation/lachesis-base/utils"
-	"github.com/Fantom-foundation/lachesis-base/utils/adapters"
-	"github.com/Fantom-foundation/lachesis-base/vecfc"
-)
+// func TestQI(t *testing.T) {
+// 	testQI(t, []pos.Weight{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+// }
 
-func TestCasualityStrategy(t *testing.T) {
-	testSpecialNamedParents(t, `
-a1.1   b1.2   c1.2   d1.2   e1.2
-║      ║      ║      ║      ║
-║      ╠──────╫───── d2.2   ║
-║      ║      ║      ║      ║
-║      b2.3 ──╫──────╣      e2.3
-║      ║      ║      ║      ║
-║      ╠──────╫───── d3.3   ║
-a2.3 ──╣      ║      ║      ║
-║      ║      ║      ║      ║
-║      b3.4 ──╣      ║      ║
-║      ║      ║      ║      ║
-║      ╠──────╫───── d4.4   ║
-║      ║      ║      ║      ║
-║      ╠───── c2.4   ║      e3.4
-║      ║      ║      ║      ║
-`, map[int]map[string]string{
-		0: {
-			"nodeA": "[]",
-			"nodeB": "[]",
-			"nodeC": "[]",
-			"nodeD": "[]",
-			"nodeE": "[]",
-		},
-		1: {
-			"nodeA": "[a1.1]",
-			"nodeB": "[a1.1]",
-			"nodeC": "[a1.1]",
-			"nodeD": "[a1.1]",
-			"nodeE": "[a1.1]",
-		},
-		2: {
-			"nodeA": "[a1.1, d2.2, e1.2]",
-			"nodeB": "[b1.2, d2.2, e1.2]",
-			"nodeC": "[c1.2, d2.2, e1.2]",
-			"nodeD": "[d2.2, c1.2, e1.2]",
-			"nodeE": "[e1.2, c1.2, d2.2]",
-		},
-		3: {
-			"nodeA": "[a2.3, c1.2, e2.3]",
-			"nodeB": "[b2.3, a2.3, e2.3]",
-			"nodeC": "[c1.2, a2.3, d3.3]",
-			"nodeD": "[d3.3, a2.3, e2.3]",
-			"nodeE": "[e2.3, a2.3, d3.3]",
-		},
-		4: {
-			"nodeA": "[a2.3, c2.4, d4.4]",
-			"nodeB": "[b3.4, d4.4, e3.4]",
-			"nodeC": "[c2.4, d4.4, e3.4]",
-			"nodeD": "[d4.4, a2.3, e3.4]",
-			"nodeE": "[e3.4, c2.4, d4.4]",
-		},
-	})
-}
+// func testQI(t *testing.T, weights []pos.Weight) {
+// 	eventCount := 5
+// 	parentCount := 10
 
-// testSpecialNamedParents is a general test of parent selection.
-// Event name means:
-// - unique event name;
-// - "." - separator;
-// - stage - makes ;
-func testSpecialNamedParents(t *testing.T, asciiScheme string, exp map[int]map[string]string) {
-	assertar := assert.New(t)
+// 	start := time.Now()
+// 	testQuorumIndexer(t, weights, eventCount, parentCount, true)
+// 	elapsed := time.Since(start)
+// 	fmt.Println("NEW took ", elapsed)
 
-	// decode is a event name parser
-	decode := func(name string) (stage int) {
-		n, err := strconv.ParseUint(strings.Split(name, ".")[1], 10, 32)
-		if err != nil {
-			panic(err.Error() + ". Name event " + name + " properly: <UniqueName>.<StageN>")
-		}
-		stage = int(n)
-		return
-	}
+// 	start = time.Now()
+// 	testQuorumIndexer(t, weights, eventCount, parentCount, false)
+// 	elapsed = time.Since(start)
+// 	fmt.Println("OLD took ", elapsed)
+// }
 
-	ordered := make(dag.Events, 0)
-	nodes, _, _ := tdag.ASCIIschemeForEach(asciiScheme, tdag.ForEachEvent{
-		Process: func(e dag.Event, name string) {
-			ordered = append(ordered, e)
-		},
-	})
+// func testQuorumIndexer(t *testing.T, weights []pos.Weight, eventCount int, parentCount int, newQI bool) {
+// 	// assertar := assert.New(t)
 
-	validators := pos.ArrayToValidators(nodes, []pos.Weight{5, 6, 7, 8, 9})
+// 	var maxFrame idx.Frame = 0
+// 	nodes := tdag.GenNodes(len(weights))
 
-	events := make(map[hash.Event]dag.Event)
-	getEvent := func(id hash.Event) dag.Event {
-		return events[id]
-	}
+// 	validators := pos.ArrayToValidators(nodes, weights)
 
-	crit := func(err error) {
-		panic(err)
-	}
+// 	diffMetricFn := func(median, current, update idx.Event, validatorIdx idx.Validator) Metric {
+// 		return 0
+// 	}
 
-	vecClock := vecfc.NewIndex(crit, vecfc.LiteConfig())
-	vecClock.Reset(validators, memorydb.New(), getEvent)
+// 	// var store *abft.Store
+// 	var input *abft.EventStore
+// 	var lch *abft.TestLachesis
+// 	inputs := make([]abft.EventStore, len(nodes))
+// 	lchs := make([]abft.TestLachesis, len(nodes))
+// 	quorumIndexers := make([]QuorumIndexer, len(nodes))
+// 	for i := 0; i < len(nodes); i++ {
+// 		lch, _, input = abft.FakeLachesis(nodes, weights)
+// 		lchs[i] = *lch
+// 		inputs[i] = *input
+// 		// store = lch.IndexedLachesis.Lachesis.Store
+// 		quorumIndexers[i] = *NewQuorumIndexer(validators, lch.DagIndex, diffMetricFn, lch)
+// 	}
 
-	capFn := func(diff idx.Event, weight pos.Weight) Metric {
-		if diff > 2 {
-			return Metric(2 * weight)
-		}
-		return Metric(diff) * Metric(weight)
-	}
-	diffMetricFn := func(median, current, update idx.Event, validatorIdx idx.Validator) Metric {
-		if update <= median || update <= current {
-			return 0
-		}
-		if median < current {
-			return capFn(update-median, validators.GetWeightByIdx(validatorIdx)) - capFn(current-median, validators.GetWeightByIdx(validatorIdx))
-		}
-		return capFn(update-median, validators.GetWeightByIdx(validatorIdx))
-	}
-	quorumIndexers := make([]*QuorumIndexer, validators.Len())
-	for i, _ := range validators.IDs() {
-		quorumIndexers[i] = NewQuorumIndexer(validators, &adapters.VectorToDagIndexer{vecClock}, diffMetricFn)
-	}
-	// build vector index
-	for _, e := range ordered {
-		events[e.ID()] = e
-		_ = vecClock.Add(e)
-	}
+// 	// ordered := map[idx.Epoch]dag.Events{}
+// 	if parentCount > len(nodes) {
+// 		parentCount = len(nodes)
+// 	}
 
-	// divide events by stages
-	var stages []dag.Events
-	for _, e := range ordered {
-		name := e.(*tdag.TestEvent).Name
-		stage := decode(name)
-		for i := len(stages); i <= stage; i++ {
-			stages = append(stages, nil)
-		}
-		stages[stage] = append(stages[stage], e)
-	}
+// 	var epoch idx.Epoch = 1
 
-	heads := hash.EventsSet{}
-	tips := map[idx.ValidatorID]*hash.Event{}
-	// check
-	for stage, ee := range stages {
-		t.Logf("Stage %d:", stage)
+// 	nodeCount := len(nodes)
+// 	events := make(map[idx.ValidatorID]dag.Events, nodeCount)
 
-		// build heads/tips and quorum indexers
-		for _, e := range ee {
-			for _, p := range e.Parents() {
-				if heads.Contains(p) {
-					heads.Erase(p)
-				}
-			}
-			heads.Add(e.ID())
-			id := e.ID()
-			tips[e.Creator()] = &id
+// 	// make events
+// 	for i := 0; i < nodeCount*eventCount; i++ {
+// 		self := i % nodeCount
+// 		creator := nodes[self]
+// 		// make
+// 		e := &tdag.TestEvent{}
+// 		e.SetCreator(creator)
+// 		e.SetParents(hash.Events{}) // first parent is empty hash
+// 		var parent dag.Event
+// 		if ee := events[creator]; len(ee) > 0 {
+// 			parent = ee[len(ee)-1] // first parent is creator's previous event, if it exists
+// 		}
+// 		if parent == nil { // leaf event
+// 			e.SetSeq(1)
+// 			e.SetLamport(1)
+// 		} else { // normal event
+// 			e.SetSeq(parent.Seq() + 1)
+// 			e.AddParent(parent.ID()) // add previous self event as parent
+// 			e.SetLamport(parent.Lamport() + 1)
 
-			for i, id := range validators.IDs() {
-				quorumIndexers[i].ProcessEvent(e, e.Creator() == id)
-			}
-		}
+// 			// create a list of heads to choose parents from
+// 			var heads dag.Events
+// 			for node, _ := range events {
+// 				if node != creator { // already have self parent so exclude it here
+// 					if ee := events[node]; len(ee) > 0 {
+// 						heads = append(heads, ee[len(ee)-1])
+// 					}
+// 				}
+// 			}
+// 			// choose parents using quorumIndexer
+// 			quorumIndexers[self].SelfParentEvent = parent.ID()
+// 			var parents dag.Events
+// 			for j := 0; j < parentCount-1; j++ {
 
-		for _, validatorID := range nodes {
-			selfParent := tips[validatorID]
+// 				var best int
+// 				if newQI {
+// 					best = quorumIndexers[self].Choose(parents.IDs(), heads.IDs()) //new quorumIndexer
+// 				} else {
+// 					best = quorumIndexers[self].SearchStrategy().Choose(parents.IDs(), heads.IDs()) //old quorumIndexer
+// 				}
+// 				parents = append(parents, heads[best])
+// 				// remove chosen head from options
+// 				heads[best] = heads[len(heads)-1]
+// 				heads = heads[:len(heads)-1]
+// 				if len(heads) <= 0 {
+// 					break
+// 				}
+// 			}
+// 			// add parents to new event
 
-			var strategies []SearchStrategy
-			for len(strategies) < 2 {
-				strategies = append(strategies, quorumIndexers[validators.GetIdx(validatorID)].SearchStrategy())
-			}
+// 			for _, parent = range parents {
+// 				e.AddParent(parent.ID())
+// 				if e.Lamport() <= parent.Lamport() {
+// 					e.SetLamport(parent.Lamport() + 1)
+// 				}
+// 			}
+// 		}
+// 		e.Name = fmt.Sprintf("%s%03d", string('a'+rune(self)), len(events[creator]))
+// 		// save and name event
+// 		hasher := sha256.New()
+// 		hasher.Write(e.Bytes())
+// 		var id [24]byte
+// 		copy(id[:], hasher.Sum(nil)[:24])
+// 		e.SetID(id)
+// 		hash.SetEventName(e.ID(), fmt.Sprintf("%s%03d", string('a'+rune(self)), len(events[creator])))
+// 		events[creator] = append(events[creator], e)
 
-			var existingParents hash.Events
-			if selfParent != nil {
-				existingParents = append(existingParents, *selfParent)
-			}
-			parents := ChooseParents(existingParents, heads.Slice(), strategies)
+// 		e.SetEpoch(epoch)
 
-			if selfParent != nil {
-				assertar.Equal(parents[0], *selfParent)
-			}
-			//t.Logf("\"%s\": \"%s\",", node.String(), parentsToString(parents))
-			if !assertar.Equal(
-				exp[stage][utils.NameOf(validatorID)],
-				parentsToString(parents),
-				"stage %d, %s", stage, utils.NameOf(validatorID),
-			) {
-				return
-			}
-		}
-	}
+// 		for j := 0; j < len(nodes); j++ {
+// 			inputs[j].SetEvent(e)
+// 			lchs[j].dagIndexer.Add(e)
 
-	assertar.NoError(nil)
-}
+// 			lchs[j].Lachesis.Build(e)
+// 			lchs[j].Lachesis.Process(e)
 
-func parentsToString(pp hash.Events) string {
-	if len(pp) < 3 {
-		return pp.String()
-	}
+// 			lchs[j].dagIndexer.Flush()
 
-	res := make(hash.Events, len(pp))
-	copy(res, pp)
+// 			quorumIndexers[j].ProcessEvent(&e.BaseEvent, self == i)
 
-	sort.Slice(res[1:], func(i, j int) bool {
-		return res[i+1].String() < res[j+1].String()
-	})
+// 		}
+// 		// fmt.Println("Event: ", i, " ", e.ID(), " Frame: ", lchs[0].dagIndexer.GetEvent(e.ID()).Frame())
+// 		if lchs[0].dagIndexer.GetEvent(e.ID()).Frame() > maxFrame {
+// 			maxFrame = lchs[0].dagIndexer.GetEvent(e.ID()).Frame()
+// 		}
+// 	}
 
-	return res.String()
-}
+// 	if newQI {
+// 		fmt.Println("Test using NEW quorumIndexer")
+// 	} else {
+// 		fmt.Println("Test using OLD quorumIndexer")
+// 	}
+// 	fmt.Println("Max Frame: ", maxFrame)
+// 	fmt.Println("Number of nodes: ", nodeCount)
+// 	fmt.Println("Number of Events: ", nodeCount*eventCount)
+// 	fmt.Println("Max Parents:", parentCount)
+// }
+
+// func testQuorumIndexerNewQIOnly(t *testing.T, weights []pos.Weight, eventCount int) {
+// 	// assertar := assert.New(t)
+// 	var maxFrame idx.Frame = 0
+// 	nodes := tdag.GenNodes(len(weights))
+
+// 	lch, _, input := abft.FakeLachesis(nodes, weights)
+
+// 	validators := pos.ArrayToValidators(nodes, weights)
+
+// 	diffMetricFn := func(median, current, update idx.Event, validatorIdx idx.Validator) Metric {
+// 		return 0
+// 	}
+
+// 	store := lch.IndexedLachesis.Lachesis.Store
+// 	quorumIndexer := NewQuorumIndexer(validators, lch.DagIndex, diffMetricFn, store)
+
+// 	parentCount := 2
+// 	if parentCount > len(nodes) {
+// 		parentCount = len(nodes)
+// 	}
+
+// 	var epoch idx.Epoch = 1
+
+// 	nodeCount := len(nodes)
+// 	events := make(map[idx.ValidatorID]dag.Events, nodeCount)
+
+// 	// make events
+// 	for i := 0; i < nodeCount*eventCount; i++ {
+// 		self := i % nodeCount
+// 		creator := nodes[self]
+// 		// make
+// 		e := &tdag.TestEvent{}
+// 		e.SetCreator(creator)
+// 		e.SetParents(hash.Events{}) // first parent is empty hash
+// 		var parent dag.Event
+// 		if ee := events[creator]; len(ee) > 0 {
+// 			parent = ee[len(ee)-1] // first parent is creator's previous event, if it exists
+// 		}
+// 		if parent == nil { // leaf event
+// 			e.SetSeq(1)
+// 			e.SetLamport(1)
+// 		} else { // normal event
+// 			e.SetSeq(parent.Seq() + 1)
+// 			e.AddParent(parent.ID()) // add previous self event as parent
+// 			e.SetLamport(parent.Lamport() + 1)
+
+// 			// create a list of heads to choose parents from
+// 			var heads dag.Events
+// 			for node, _ := range events {
+// 				if node != creator { // already have self parent so exclude it here
+// 					if ee := events[node]; len(ee) > 0 {
+// 						heads = append(heads, ee[len(ee)-1])
+// 					}
+// 				}
+// 			}
+// 			// choose parents using quorumIndexer
+// 			quorumIndexer.SelfParentEvent = parent.ID()
+// 			var parents dag.Events
+// 			for j := 0; j < parentCount; j++ {
+
+// 				best := quorumIndexer.Choose(parents.IDs(), heads.IDs()) //new quorumIndexer
+// 				parents = append(parents, heads[best])
+// 				// remove chosen head from options
+// 				heads[best] = heads[len(heads)-1]
+// 				heads = heads[:len(heads)-1]
+// 				if len(heads) <= 0 {
+// 					break
+// 				}
+// 			}
+// 			// add parents to new event
+
+// 			for _, parent = range parents {
+// 				e.AddParent(parent.ID())
+// 				if e.Lamport() <= parent.Lamport() {
+// 					e.SetLamport(parent.Lamport() + 1)
+// 				}
+// 			}
+// 		}
+// 		e.Name = fmt.Sprintf("%s%03d", string('a'+rune(self)), len(events[creator]))
+// 		// save and name event
+// 		hasher := sha256.New()
+// 		hasher.Write(e.Bytes())
+// 		var id [24]byte
+// 		copy(id[:], hasher.Sum(nil)[:24])
+// 		e.SetID(id)
+// 		hash.SetEventName(e.ID(), fmt.Sprintf("%s%03d", string('a'+rune(self)), len(events[creator])))
+// 		events[creator] = append(events[creator], e)
+
+// 		e.SetEpoch(epoch)
+// 		// e.SetID(lch.uniqueDirtyID.sample())
+// 		input.SetEvent(e)
+// 		lch.dagIndexer.Add(e)
+
+// 		lch.Lachesis.Build(e)
+// 		lch.Lachesis.Process(e)
+
+// 		lch.dagIndexer.Flush()
+
+// 		if lch.dagIndexer.GetEvent(e.ID()).Frame() > maxFrame {
+// 			maxFrame = lch.dagIndexer.GetEvent(e.ID()).Frame()
+// 		}
+
+// 	}
+// 	fmt.Println("Test using NEW quorumIndexer")
+// 	fmt.Println("Max Frame: ", maxFrame)
+// 	fmt.Println("Number of nodes: ", nodeCount)
+// 	fmt.Println("Number of Events: ", nodeCount*eventCount)
+// }

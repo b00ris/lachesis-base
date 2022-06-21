@@ -65,7 +65,7 @@ func testConfirmBlocks(t *testing.T, weights []pos.Weight, cheatersCount int) {
 		blocks []*lachesis.Block
 	)
 	lch.applyBlock = func(block *lachesis.Block) *pos.Validators {
-		frames = append(frames, lch.store.GetLastDecidedFrame()+1)
+		frames = append(frames, lch.Store.GetLastDecidedFrame()+1)
 		blocks = append(blocks, block)
 
 		return nil
@@ -91,8 +91,8 @@ func testConfirmBlocks(t *testing.T, weights []pos.Weight, cheatersCount int) {
 	})
 
 	// unconfirm all events
-	it := lch.store.epochTable.ConfirmedEvent.NewIterator(nil, nil)
-	batch := lch.store.epochTable.ConfirmedEvent.NewBatch()
+	it := lch.Store.epochTable.ConfirmedEvent.NewIterator(nil, nil)
+	batch := lch.Store.epochTable.ConfirmedEvent.NewBatch()
 	for it.Next() {
 		assertar.NoError(batch.Delete(it.Key()))
 	}

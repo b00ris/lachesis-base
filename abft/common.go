@@ -4,6 +4,7 @@ import (
 	"math/rand"
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
+	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 	"github.com/Fantom-foundation/lachesis-base/inter/pos"
 	"github.com/Fantom-foundation/lachesis-base/kvdb"
@@ -81,13 +82,13 @@ func FakeLachesis(nodes []idx.ValidatorID, weights []pos.Weight, mods ...memoryd
 				EndBlock: func() (sealEpoch *pos.Validators) {
 					// track blocks
 					key := BlockKey{
-						Epoch: extended.store.GetEpoch(),
-						Frame: extended.store.GetLastDecidedFrame() + 1,
+						Epoch: extended.Store.GetEpoch(),
+						Frame: extended.Store.GetLastDecidedFrame() + 1,
 					}
 					extended.blocks[key] = &BlockResult{
 						Atropos:    block.Atropos,
 						Cheaters:   block.Cheaters,
-						Validators: extended.store.GetValidators(),
+						Validators: extended.Store.GetValidators(),
 					}
 					// check that prev block exists
 					if extended.lastBlock.Epoch != key.Epoch && key.Frame != 1 {
@@ -118,4 +119,38 @@ func mutateValidators(validators *pos.Validators) *pos.Validators {
 		builder.Set(vid, pos.Weight(stake))
 	}
 	return builder.Build()
+}
+
+// EventStore is a abft event storage for test purpose.
+// It implements EventSource interface.
+type EventStore struct {
+	db map[hash.Event]dag.Event
+}
+
+// NewEventStore creates store over memory map.
+func NewEventStore() *EventStore {
+	return &EventStore{
+		db: map[hash.Event]dag.Event{},
+	}
+}
+
+// Close leaves underlying database.
+func (s *EventStore) Close() {
+	s.db = nil
+}
+
+// SetEvent stores event.
+func (s *EventStore) SetEvent(e dag.Event) {
+	s.db[e.ID()] = e
+}
+
+// GetEvent returns stored event.
+func (s *EventStore) GetEvent(h hash.Event) dag.Event {
+	return s.db[h]
+}
+
+// HasEvent returns true if event exists.
+func (s *EventStore) HasEvent(h hash.Event) bool {
+	_, ok := s.db[h]
+	return ok
 }
