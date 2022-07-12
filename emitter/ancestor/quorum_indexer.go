@@ -1,6 +1,7 @@
 package ancestor
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -64,7 +65,7 @@ func NewMetricStats() MetricStats {
 	return MetricStats{
 		expMovAv:  0,
 		expMovVar: 0,
-		expCoeff:  0.01,
+		expCoeff:  0.05,
 	}
 }
 
@@ -80,6 +81,7 @@ func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn Di
 		lachesis:            lachesis,
 		r:                   rand.New(rand.NewSource(time.Now().UnixNano())),
 		SelfParentEventFlag: false,
+		metricStats:         NewMetricStats(),
 	}
 }
 
@@ -268,7 +270,11 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 
 			if !FCProgress[i].HasQuorum() {
 				// if the root does not forkless cause even with the head, add improvement head makes toward forkless cause
-				rootProgressMetrics[i].newRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
+				rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+				rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+				rootProgressMetrics[i].newRootKnowledge += rootStake * (FCProgress[i].Sum() - currentFCProgress.Sum())
+
+				// rootProgressMetrics[i].newRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
 
 				if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
 					// this means that creator with head parent observes the root, but creator on its own does not
@@ -308,13 +314,21 @@ func (h *QuorumIndexer) GetTimingMetric(chosenHeads hash.Events) Metric {
 	for _, head := range chosenHeads {
 		newFrame = maxFrame(newFrame, h.dagi.GetEvent(head).Frame())
 	}
+	//note that if this new event block is a root and starts a new frame but none of its parents are from the new frame,
+	//then it will not make any progress to producing a new root for the new frame, so we don't need to bother calculating that (zero) progress
+
+	if prevFrame+1 < newFrame {
+		// if the new event is more than one frame ahead of the previous event block's frame then return the maximum metric
+		// this may occur if the node has been offline temporarily, or has been disconnected from the P2P network.
+		return Metric(1)
+	}
 
 	if prevFrame < newFrame {
 		// the event block will become a root, and move to the next frame
-		// check how far from quorum the previous event block is
+		// check how far from quorum the previous event block is to know far much progress new event block made to complete the prev frame
 		prevRoots := h.lachesis.Store.GetFrameRoots(prevFrame)
 		for _, root := range prevRoots {
-			prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil)
+			prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil) //compute for prev event
 			rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
 			rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
 			progress := prevFCProgress[0].Sum()
@@ -323,48 +337,58 @@ func (h *QuorumIndexer) GetTimingMetric(chosenHeads hash.Events) Metric {
 			}
 			prevFramePrevEventRootKnowledge += rootStake * progress
 
-			newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads)
+			newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads) //compute for new event
 
 			progress = newFCProgress[0].Sum()
-			// if progress > newFCProgress[0].Quorum {
-			// 	progress = newFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
-			// }
+			if progress > newFCProgress[0].Quorum {
+				progress = newFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+			}
 			prevFrameNewEventRootKnowledge += rootStake * progress
 		}
-		floatNew := float64(prevFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight()) * float64(h.validators.TotalWeight()))
-		floatPrev := float64(prevFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight()) * float64(h.validators.TotalWeight()))
-		metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
+		// normalize to numbers in range [0,1]
+		floatNew := float64(prevFrameNewEventRootKnowledge) / (float64(h.validators.Quorum()) * float64(h.validators.TotalWeight()))
+		floatPrev := float64(prevFramePrevEventRootKnowledge) / (float64(h.validators.Quorum()) * float64(h.validators.TotalWeight()))
+		// metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
+		metric += floatNew - floatPrev
+
+		selfValidatorIdx := h.validators.GetIdx(h.dagi.GetEvent(h.SelfParentEvent).Creator())
+		selfStake := h.validators.GetWeightByIdx(selfValidatorIdx)
+		newFramePrevEventRootKnowledge = selfStake * selfStake
 	}
 
 	// Check progress in current frame
 	newRoots := h.lachesis.Store.GetFrameRoots(newFrame)
 	for _, root := range newRoots {
-		prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil)
 		rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
 		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
-		progress := prevFCProgress[0].Sum()
-		// if progress > prevFCProgress[0].Quorum {
-		// 	progress = prevFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
-		// }
-		newFramePrevEventRootKnowledge += rootStake * progress
+		if prevFrame == newFrame {
+			prevFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, nil) //compute for prev event
+			progress := prevFCProgress[0].Sum()
+			if progress > prevFCProgress[0].Quorum {
+				progress = prevFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
+			}
+			newFramePrevEventRootKnowledge += rootStake * progress
+		}
 
-		newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads)
+		newFCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, nil, chosenHeads) //compute for new event
 
-		progress = newFCProgress[0].Sum()
+		progress := newFCProgress[0].Sum()
 		if progress > newFCProgress[0].Quorum {
 			progress = newFCProgress[0].Quorum // if more than a quorum, truncate to a quorum
 		}
 		newFrameNewEventRootKnowledge += rootStake * progress
 	}
-
-	floatNew := float64(newFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight())) * float64(h.validators.TotalWeight())
-	floatPrev := float64(newFrameNewEventRootKnowledge) / (float64(h.validators.TotalWeight())) * float64(h.validators.TotalWeight())
+	// normalize to numbers in range [0,1]
+	floatNew := float64(newFrameNewEventRootKnowledge) / (float64(h.validators.Quorum()) * float64(h.validators.TotalWeight()))
+	floatPrev := float64(newFramePrevEventRootKnowledge) / (float64(h.validators.Quorum()) * float64(h.validators.TotalWeight()))
 
 	// if root knowledge grows (approximately) exponentially with frame sequence number, then the log (or number of orders of magnitude)
-	// difference between events shoudl be roughly constant, independent of where the new and prev frames are in the frame sequence
+	// difference between events should be roughly constant, independent of where the new and prev frames are in the frame sequence
 	// (e.g. early or late in the frame)
-	metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
-	// For the purposes of producing a metric in the range [0,1] this centers the metric distribution to mean = 1, and standard deviation 0.5
+	// metric += math.Log10(floatNew) - math.Log10(floatPrev) // log10 gives orders of magnitude difference between new and prev
+	metric += floatNew - floatPrev
+
+	// For the purposes of producing a metric in the range [0,1] the below centers the metric distribution to mean = 1, and standard deviation 0.5
 	// if the metric data are normally distributed then about 84% of adjustedMetrics will be > 0.5
 	adjustedMetric := (metric - h.metricStats.expMovAv + 1) * (0.5 / math.Sqrt(h.metricStats.expMovVar))
 	if adjustedMetric > 1 {
@@ -377,11 +401,13 @@ func (h *QuorumIndexer) GetTimingMetric(chosenHeads hash.Events) Metric {
 	}
 
 	// Collect statistics on the metric, so that the size of any metric can be compard to past distribution.
-	// commput the deviation from the mean, divided by standard deviation, i.e. (metric - mean(metric))/std(metric)
+	// compute the deviation from the mean, divided by standard deviation, i.e. (metric - mean(metric))/std(metric)
 	// The data may be non-stationary over time, so we can use an exponential moving average, and moving variance
 	h.updateMetricStats(metric) // +++TODO should only adjust this when the event is actually emitted? Not just when calculating
-
-	return Metric(adjustedMetric)
+	// fmt.Println("Raw Metric: ", metric, " Av: ", h.metricStats.expMovAv, " Var: ", h.metricStats.expMovVar)
+	fmt.Print(metric, ", ")
+	// return Metric(adjustedMetric)
+	return Metric(metric * 1e6)
 }
 
 func (h *QuorumIndexer) updateMetricStats(metric float64) {
