@@ -3,6 +3,7 @@ package quorumIndexer
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -14,6 +15,12 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/inter/dag/tdag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 	"github.com/Fantom-foundation/lachesis-base/inter/pos"
+)
+
+const (
+	// DecimalUnit is used to define ratios with integers, it's 1.0
+	DecimalUnit = 1e6
+	maxVal      = math.MaxUint64/uint64(DecimalUnit) - 1
 )
 
 func TestQI(t *testing.T) {
@@ -46,7 +53,7 @@ func testQI(t *testing.T, weights []pos.Weight) {
 	}
 	for i := range parentCount {
 		start := time.Now()
-		// testQuorumIndexer(t, weights, eventCount, parentCount, true)
+		// // testQuorumIndexer(t, weights, eventCount, parentCount, true)
 		testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval)
 		elapsed := time.Since(start)
 		fmt.Println("NEW took ", elapsed)
@@ -245,7 +252,10 @@ func testQuorumIndexer(t *testing.T, weights []pos.Weight, eventCount int, paren
 }
 
 func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int, parentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int) {
-	randSrc := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
+	randSrc := rand.New(rand.NewSource(0))  // use a fixed seed of 0 for comparison between runs
+	delayRNG := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
+	delayDist := delayCumDist()
+	maxDelay = len(delayDist) + 1
 
 	// create a 3D slice with coordinates [time][node][node] that is used to store delayed transmission of events between nodes
 	//each time coordinate corresponds to 1 millisecond of delay between a pair of nodes
@@ -283,14 +293,14 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 	// setup event creation values
 	eventCreationCounter := make([]int, len(weights))
 	eventCreationInterval := make([]int, len(weights))
-	slowestNode := 0
+	// slowestNode := 0
 	longestInterval := 0
 
 	for i := range eventCreationCounter {
 		eventCreationCounter[i] = randSrc.Intn(eventInterval[i])
 		eventCreationInterval[i] = eventInterval[i]
 		if eventCreationInterval[i] > longestInterval {
-			slowestNode = i
+			// slowestNode = i
 			longestInterval = eventCreationInterval[i]
 		}
 	}
@@ -325,6 +335,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 	if parentCount > len(nodes) {
 		parentCount = len(nodes)
 	}
+	tooFewHeadsCtr := 0
 
 	var epoch idx.Epoch = 1
 
@@ -398,6 +409,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		//nodes now create events, when they are ready
 		for self := 0; self < nodeCount; self++ {
 			eventCreationCounter[self]++
+
 			if eventCreationCounter[self] >= eventCreationInterval[self] {
 				//self node is ready to create a new event
 
@@ -427,6 +439,10 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 
 					// choose parents using quorumIndexer
 					quorumIndexers[self].SelfParentEvent = selfParent[self].ID()
+
+					if len(heads) <= parentCount-1 {
+						tooFewHeadsCtr++ // parent selection method doesn't matter in this case, count occurances
+					}
 
 					//add a random head
 					// randHead := rand.Intn(len(heads))
@@ -482,15 +498,22 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 					selfParent[self] = *e
 
 					//now start propagation of event to other nodes
+					delay := 1
 					for receiveNode := 0; receiveNode < nodeCount; receiveNode++ {
-						receiveTime := (timeIdx + delays[self][receiveNode]) % maxDelay
+						// receiveTime := (timeIdx + delays[self][receiveNode]) % maxDelay
+						if receiveNode != self {
+							delay = sampleDist(delayRNG, delayDist) // get a random delay from data distribution
+						} else {
+							delay = 1 // no delay to send to self
+						}
+						receiveTime := (timeIdx + delay) % maxDelay
 						eventPropagation[receiveTime][self][receiveNode] = e
 					}
 
 					eventCreationCounter[self] = 0 //reset event creation interval counter
-					if self == slowestNode {
-						eventsComplete++ // increment count of events created
-					}
+					// if self == slowestNode {
+					eventsComplete++ // increment count of events created
+					// }
 				}
 			}
 		}
@@ -509,6 +532,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 	fmt.Println("Number of nodes: ", nodeCount)
 	fmt.Println("Number of Events: ", eventsComplete)
 	fmt.Println("Max Parents:", parentCount)
+	fmt.Println("Fraction of events with equal or fewer heads than desired parents: ", float64(tooFewHeadsCtr)/float64(eventsComplete))
 }
 
 func updateHeads(newEvent dag.Event, heads *dag.Events) {
@@ -543,4 +567,42 @@ func processEvent(input abft.EventStore, lchs *abft.TestLachesis, e *tdag.TestEv
 	}
 	updateHeads(e, heads)
 	return lchs.DagIndexer.GetEvent(e.ID()).Frame()
+}
+
+func sampleDist(rng *rand.Rand, cumDist []float64) (sample int) {
+	// generates a random sample from the distribution used to calculate cumDist (using inverse transform sampling)
+	random := rng.Float64()
+	for sample = 0; cumDist[sample] <= random && sample < len(cumDist); sample++ {
+	}
+	return sample
+}
+
+func delayCumDist() (cumDist []float64) {
+	// the purpose of this function is to caluclate a cumulative distribution of delays for use in creating random samples from the data distribution
+
+	// some delay data in milliseconds
+	delayData := [...]int{54, 110, 60, 124, 75, 47, 165, 152, 18, 18, 52, 83, 80, 92, 51, 11, 21, 32, 120, 9, 18, 129, 64, 53, 83, 118, 12, 79, 54, 21, 18, 62, 121, 7, 22, 147, 73, 170, 198, 145, 25, 138, 123, 68, 109, 73, 34, 122, 10, 121, 23, 129, 82, 85, 58, 129, 281, 275, 300, 174, 158, 169, 124, 186, 61, 51, 107, 85, 49, 131, 12, 52, 100, 17, 32, 70, 121, 6, 17, 190, 59, 16, 372, 233, 201, 169, 97, 91, 101, 80, 127, 26, 12, 10, 49, 49, 83, 19, 91, 61, 52, 129, 34, 125, 66, 116, 110, 82, 104, 82, 52, 29, 95, 72, 133, 65, 338, 285, 221, 282, 196, 234, 315, 183, 135, 69, 102, 187, 79, 79, 82, 20, 129, 122, 54, 9, 9, 52, 21, 91, 74, 14, 20, 18, 63, 47, 83, 124, 7, 131, 18, 132, 285, 186, 242, 190, 131, 127, 72, 243, 218, 223, 185, 140, 136, 87, 123, 265, 166, 112, 94, 82, 92, 226, 95, 78, 35, 54, 63, 223, 59, 30, 56, 87, 163, 195, 69, 173, 37, 25, 64, 52, 121, 36, 14, 29, 76, 170, 144, 131, 162, 133, 15, 17, 129, 50, 67, 176, 40, 23, 51, 79, 85, 128, 17, 18, 45, 62, 84, 134, 40, 130, 32, 55, 66, 93, 26, 132, 15, 19, 27, 56, 106, 35, 30, 54, 60, 83, 128, 125, 11, 8, 18, 83, 63, 49, 94, 94, 45, 17, 21, 49, 51, 79, 82, 97, 123, 127, 8, 14, 20, 54, 107, 41, 30, 52, 91, 122, 9, 13, 136, 54, 46, 72, 131, 51, 233, 167, 172, 63, 31, 59, 67, 88, 134, 15, 17, 21, 97, 129, 35, 54, 23, 50, 82, 83, 80, 130, 36, 22, 33, 71, 46, 39, 85, 101, 121, 82, 122, 50, 26, 27, 95, 24, 137, 9, 25, 130, 62, 193, 57, 55, 22, 98}
+
+	// find the maximum delay in the data
+	maxDelay := 0
+	for _, delay := range delayData {
+		if delay > maxDelay {
+			maxDelay = delay
+		}
+	}
+
+	// calculate the distribution of the delay data by diving into 1 millisecond bins
+	binVals := make([]float64, maxDelay+1)
+	for _, latency := range delayData {
+		binVals[latency]++
+	}
+
+	//now calculate the cumulative distribution of the delay data
+	cumDist = make([]float64, len(binVals))
+	cumDist[0] = float64(binVals[0]) / float64(len(delayData))
+	npts := float64(len(delayData))
+	for i := 1; i < len(cumDist); i++ {
+		cumDist[i] = cumDist[i-1] + binVals[i]/npts
+	}
+	return cumDist
 }
