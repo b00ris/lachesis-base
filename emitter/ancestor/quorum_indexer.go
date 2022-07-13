@@ -231,7 +231,7 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 	// head denotes the event block of another validator that is being considered as a potential parent.
 
 	// find max frame number of self event block, and chosen heads
-	currentFrame := h.dagi.GetEvent(*&h.SelfParentEvent).Frame()
+	currentFrame := h.dagi.GetEvent(h.SelfParentEvent).Frame()
 
 	// find frame number of each head, and max frame number
 	var maxHeadFrame idx.Frame = currentFrame
