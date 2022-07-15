@@ -1,7 +1,6 @@
 package ancestor
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -405,7 +404,7 @@ func (h *QuorumIndexer) GetTimingMetric(chosenHeads hash.Events) Metric {
 	// The data may be non-stationary over time, so we can use an exponential moving average, and moving variance
 	h.updateMetricStats(metric) // +++TODO should only adjust this when the event is actually emitted? Not just when calculating
 	// fmt.Println("Raw Metric: ", metric, " Av: ", h.metricStats.expMovAv, " Var: ", h.metricStats.expMovVar)
-	fmt.Print(metric, ", ")
+	// fmt.Print(metric, ", ")
 	// return Metric(adjustedMetric)
 	return Metric(metric * 1e6)
 }
@@ -424,6 +423,31 @@ func (h *QuorumIndexer) updateMetricStats(metric float64) {
 		h.metricStats.expMovAv = h.metricStats.expCoeff*deviation*deviation + (1-h.metricStats.expCoeff)*h.metricStats.expMovVar
 	}
 
+}
+
+func (h *QuorumIndexer) GetMetricOfViaParents(parents hash.Events) Metric {
+	if h.dirty {
+		h.recacheState()
+	}
+	vecClock := make([]dagidx.HighestBeforeSeq, len(parents))
+	for i, parent := range parents {
+		vecClock[i] = h.dagi.GetMergedHighestBefore(parent)
+	}
+	var metric Metric
+	for validatorIdx := idx.Validator(0); validatorIdx < h.validators.Len(); validatorIdx++ {
+
+		//find the Highest of all the parents
+		var update idx.Event
+		for i, _ := range parents {
+			if seqOf(vecClock[i].Get(validatorIdx)) > update {
+				update = seqOf(vecClock[i].Get(validatorIdx))
+			}
+		}
+		current := h.selfParentSeqs[validatorIdx]
+		median := h.globalMedianSeqs[validatorIdx]
+		metric += h.diffMetricFn(median, current, update, validatorIdx)
+	}
+	return metric
 }
 
 func (h *QuorumIndexer) GetMetricOf(id hash.Event) Metric {
