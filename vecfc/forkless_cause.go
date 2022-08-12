@@ -176,6 +176,16 @@ func (vi *Index) ForklessCauseProgress(aID, bID hash.Event, heads, chosenHeads h
 			}
 		}
 	}
+	// We want FC progress for new candidate events with parents aID + chosenHeads + head
+	// aID may not contribute to forkless cause without the heads,
+	// but may contribute with the heads. HighestBefore and LowestAfter used above do not incorporate
+	// these potential new events, so ensure the contribution of aID's creator is checked and made here
+	aCreatorID := vi.GetEvent(aID).Creator()
+	for _, FC := range headsFCProgress {
+		if FC.Sum() > 0 { // if anything in candidate event's subgraph observes bID, then the candidate must too
+			FC.Count(aCreatorID)
+		}
+	}
 	return headsFCProgress
 }
 
