@@ -43,10 +43,10 @@ type QITestEvent struct {
 
 func TestQI(t *testing.T) {
 	// numNodes := 70
-	nodes := []int{20, 30, 40, 50, 60, 70, 80, 90, 100}
-	// nodes := [1]int{20}
-	// stakeDist := stakeCumDist()
-	// stakeRNG := rand.New(rand.NewSource(0))
+	// nodes := []int{20, 30, 40, 50, 60, 70, 80, 90, 100}
+	nodes := []int{20}
+	// stakeDist := stakeCumDist() // for stakes drawn from distribution
+	// stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
 	for _, numNodes := range nodes {
 
 		weights := make([]pos.Weight, numNodes)
@@ -63,8 +63,8 @@ func TestQI(t *testing.T) {
 
 func testQI(t *testing.T, weights []pos.Weight) {
 	eventCount := 50
-	// parentCount := [5]int{2, 4, 6, 8, 10}
-	parentCount := []int{3} //, 4, 5, 6, 7, 8, 9, 10}
+	// parentCount := []int{3,4,5,6,7,8,9,10}
+	parentCount := []int{3}
 
 	meanDelay := 200
 	stdDelay := 50
@@ -74,46 +74,46 @@ func testQI(t *testing.T, weights []pos.Weight) {
 		eventInterval[i] = 1 // this determines how many milliseconds the node waits before creating a new event
 	}
 	var metricParameter float64
-	metricParameter = 0.1
+	metricParameter = 100 // a general purpose parameter for use in testign/development
 	// offlineNodes := false // all nodes create events
 	offlineNodes := true // only Quorum nodes create events
-	for metricParameter > 0.0 {
-		fmt.Println("")
-		fmt.Println("Metric Parameter: ", metricParameter)
-		for i := range parentCount {
-			offlineNodes = true
-			start := time.Now()
-			// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-			elapsed := time.Since(start)
-			fmt.Println("NEW took ", elapsed)
+	// for metricParameter > 0.0 {
+	fmt.Println("")
+	fmt.Println("Metric Parameter: ", metricParameter)
+	for i := range parentCount {
+		offlineNodes = true
+		start := time.Now()
+		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		elapsed := time.Since(start)
+		fmt.Println("NEW took ", elapsed)
 
-			offlineNodes = false
-			start = time.Now()
-			testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-			elapsed = time.Since(start)
-			fmt.Println("NEW took ", elapsed)
+		offlineNodes = false
+		start = time.Now()
+		testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		elapsed = time.Since(start)
+		fmt.Println("NEW took ", elapsed)
 
-			offlineNodes = true
-			start = time.Now()
-			// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-			elapsed = time.Since(start)
-			fmt.Println("OLD took ", elapsed)
+		offlineNodes = true
+		start = time.Now()
+		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		elapsed = time.Since(start)
+		fmt.Println("OLD took ", elapsed)
 
-			offlineNodes = false
-			start = time.Now()
-			// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-			elapsed = time.Since(start)
-			fmt.Println("OLD took ", elapsed)
-		}
-		metricParameter = metricParameter - 0.1
+		offlineNodes = false
+		start = time.Now()
+		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		elapsed = time.Since(start)
+		fmt.Println("OLD took ", elapsed)
 	}
+	// 	metricParameter = metricParameter - 0.1
+	// }
 }
 
 func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int, parentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int, metricParameter float64, offlineNodes bool) {
-	randSrc := rand.New(rand.NewSource(0))   // use a fixed seed of 0 for comparison between runso
+	randSrc := rand.New(rand.NewSource(0))   // use a fixed seed of 0 for comparison between runs
 	delayRNG := rand.New(rand.NewSource(0))  // use a fixed seed of 0 for comparison between runs
 	randEvRNG := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
-	randEvRate := 0.00                       //1.0 / 100.0
+	randEvRate := 0.00                       // sets the probability that an event will be created randomly
 	delayDist := delayCumDist()
 	maxDelay = len(delayDist) + 10
 
@@ -573,37 +573,7 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 
 	if len(e.Parents()) > 1 { // need at aleast one parent other than self
 
-		// ***RECEIVED STAKE***
-		// fmt.Println(" Timing metric: ", float64(newEventReceived.Sum()), " Condition: ", (metricParameter)*float64(newEventReceived.Quorum))
-		// if passedTime > times.minInterval {
-		// 	if float64(newEventReceived.Sum()) > (metricParameter)*float64(newEventReceived.Quorum) {
-		// 		// metric := quorumIndexer.GetAbsoluteTimingMetricKnownRoots(e.Parents())
-		// 		// fmt.Print(",", metric)
-		// 		// fmt.Print(" Time: ", times.nowTime, " e: ", e.Name, " metric: ", float64(metric))
-		// 		return true
-		// 	}
-		// }
-		// return false // dont emit an event yet
-
 		// ***Logistic Growth****
-		// if passedTime > times.minInterval {
-		// 	metric := quorumIndexer.LogisticTimingCondition4(e.Parents(), nParents, newEventReceived.Sum())
-		// 	if metric {
-		// 		return true
-		// 	}
-		// }
-		// return false
-
-		// ***Logistic Growth****
-		// if passedTime > times.minInterval {
-		// 	metric := quorumIndexer.LogisticTimingCondition4(e.Parents(), nParents, newEventReceived.Sum())
-		// 	if metric {
-		// 		return true
-		// 	}
-		// }
-		// return false
-		// if quorumIndexer.Dagi.GetEvent(quorumIndexer.SelfParentEvent).Frame() > 1 {
-		// ***Exponenetial Growth****
 		if passedTime > times.minInterval {
 			// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
 			metric := quorumIndexer.LogisticTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
@@ -611,12 +581,6 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 				return true
 			}
 		}
-		return false
-		// } else {
-		// 	if float64(passedTime) > 110 {
-		// 		return true
-		// 	}
-		// }
 
 		// ***go-opera event timing***
 		// parents := e.Parents()
@@ -630,9 +594,17 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 		// 	return true
 		// }
 
-		// ***Time interval selection***
-		// if float64(passedTime) < metricParameter {
-		// 	return false
+		// ***RECEIVED STAKE***
+		// fmt.Println(" Timing metric: ", float64(newEventReceived.Sum()), " Condition: ", (metricParameter)*float64(newEventReceived.Quorum))
+		// if passedTime > times.minInterval {
+		// 	if float64(newEventReceived.Sum()) > (metricParameter)*float64(newEventReceived.Quorum) {
+		// 		return true
+		// 	}
+		// }
+
+		// ***Fixed Time interval ***
+		// if float64(passedTime) >= metricParameter {
+		// 	return true
 		// }
 	}
 	return false
