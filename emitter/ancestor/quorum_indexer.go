@@ -36,10 +36,10 @@ type RootProgressMetrics struct {
 	NewRootKnowledge      uint64
 }
 
-type MetricStats struct {
-	expMovAv  float64 // exponential moving average
-	expMovVar float64 // exponential moving variance
-	expCoeff  float64 // exponential constant
+type ExpMov struct {
+	mean     float64 // exponential moving average
+	variance float64 // exponential moving variance
+	expCoeff float64 // exponential constant
 }
 
 type DagIndex interface {
@@ -56,7 +56,7 @@ type QuorumIndexer struct {
 
 	lachesis    *abft.Lachesis
 	r           *rand.Rand
-	metricStats MetricStats
+	TimingStats map[idx.ValidatorID]ExpMov
 
 	CreatorFrame idx.Frame
 
@@ -69,12 +69,20 @@ type QuorumIndexer struct {
 	diffMetricFn DiffMetricFn
 }
 
-func NewMetricStats() MetricStats {
-	return MetricStats{
-		expMovAv:  0,
-		expMovVar: 0,
-		expCoeff:  0.05,
+func NewExpMov() ExpMov {
+	return ExpMov{
+		mean:     0,
+		variance: 0,
+		expCoeff: 0.05,
 	}
+}
+
+func newTimingStats(validators *pos.Validators) *map[idx.ValidatorID]ExpMov {
+	TimingStats := make(map[idx.ValidatorID]ExpMov)
+	for _, validator := range validators.IDs() {
+		TimingStats[validator] = NewExpMov()
+	}
+	return &TimingStats
 }
 
 func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis *abft.Lachesis) *QuorumIndexer {
@@ -89,7 +97,7 @@ func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn Di
 		lachesis:            lachesis,
 		r:                   rand.New(rand.NewSource(time.Now().UnixNano())),
 		SelfParentEventFlag: false,
-		metricStats:         NewMetricStats(),
+		TimingStats:         *newTimingStats(validators),
 	}
 }
 
@@ -580,15 +588,14 @@ func (h *QuorumIndexer) eventRootKnowledgeQByCount(frame idx.Frame, event hash.E
 			numRootsForQ++
 			rootValidators = append(rootValidators, rootValidatorIdx)
 		} else {
-			partialStake := h.validators.Quorum() - bestRootsStake
 			kNew += kidx.K
-			bestRootsStake += partialStake // this should trigger the break condition above
+			bestRootsStake = h.validators.Quorum() // this will trigger the break condition above
 			numRootsForQ++
 			rootValidators = append(rootValidators, rootValidatorIdx)
 		}
 	}
 
-	// calculate how many extra roots are needed for quorum (if any) , to get the denominator of k
+	// calculate how many extra roots are needed for quorum (if any), to get the denominator of k
 	for i, weight := range weights {
 		if bestRootsStake >= h.validators.Quorum() {
 			break
@@ -605,7 +612,7 @@ func (h *QuorumIndexer) eventRootKnowledgeQByCount(frame idx.Frame, event hash.E
 			numRootsForQ++
 		}
 	}
-	return kNew / numRootsForQ // this results should be less than 1
+	return kNew / numRootsForQ // this result should be less than or equal to 1
 }
 
 func (h *QuorumIndexer) eventRootKnowledgeQByStake(event hash.Event) float64 {
@@ -645,7 +652,7 @@ func (h *QuorumIndexer) eventRootKnowledgeQByStake(event hash.Event) float64 {
 		} else {
 			partialStake := h.validators.Quorum() - bestRootsStake
 			kNew += float64(kidx.K) * float64(partialStake)
-			bestRootsStake += partialStake // this should trigger the break condition above
+			bestRootsStake = h.validators.Quorum() // this will trigger the break condition above
 		}
 	}
 	kNew = kNew / D
@@ -653,7 +660,7 @@ func (h *QuorumIndexer) eventRootKnowledgeQByStake(event hash.Event) float64 {
 	return kNew
 }
 
-func (h *QuorumIndexer) LogisticTimingConditionByCount(chosenHeads hash.Events, nParents int, receivedStake pos.Weight) bool {
+func (h *QuorumIndexer) LogisticTimingDeltat(chosenHeads hash.Events, nParents int, receivedStake pos.Weight) float64 {
 
 	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
@@ -665,30 +672,164 @@ func (h *QuorumIndexer) LogisticTimingConditionByCount(chosenHeads hash.Events, 
 	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
 	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
 
-	KCond := float64(nParents) * kPrev / (float64(nParents)*kPrev - kPrev + 1.0) // This condition is based on logistic growth
+	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
+	Deltat := tNew - tPrev
 
-	if kNew >= KCond {
-		fmt.Print(", ", kNew)
-		return true
+	kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+	tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+	if kNew == 1 {
+		// fmt.Print("Deltat inf")
+		Deltat = tMax - tPrev
 	}
+	if kPrev == 0 {
+		// +++TODO loop until finding a past frame with an event. Prev could be very old!
 
-	return false
+		kPrev := h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+
+		Deltat = (tNew - tMin) + (tMax - tPrev)
+	}
+	return Deltat
 }
 
-func (h *QuorumIndexer) updateMetricStats(metric float64) {
+func (h *QuorumIndexer) LogisticTimingConditionByCount(chosenHeads hash.Events, nParents int, receivedStake pos.Weight) (float64, bool) {
 
-	if h.metricStats.expMovAv == 0 {
-		h.metricStats.expMovAv = metric
-	} else {
-		h.metricStats.expMovAv = h.metricStats.expCoeff*metric + (1-h.metricStats.expCoeff)*h.metricStats.expMovAv
-	}
-	deviation := metric - h.metricStats.expMovAv
-	if h.metricStats.expMovVar == 0 {
-		h.metricStats.expMovVar = deviation * deviation
-	} else {
-		h.metricStats.expMovAv = h.metricStats.expCoeff*deviation*deviation + (1-h.metricStats.expCoeff)*h.metricStats.expMovVar
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
 	}
 
+	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
+	kCond := 0.0
+	if kPrev == 0 {
+		// +++TODO loop until finding a past frame with an event. Prev could be very old!
+		kPrev = h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+		tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+
+		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+
+		tCond := tMin - (tMax - tPrev) + 1.0
+		kCond = 1.0 / (1.0 + math.Exp(-tCond*math.Log(float64(nParents))))
+	} else {
+		kCond = float64(nParents) * kPrev / (float64(nParents)*kPrev - kPrev + 1.0) // This condition is based on logistic growth
+	}
+
+	if kNew >= kCond {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
+}
+
+func timingMedianMean(expMovs map[idx.ValidatorID]ExpMov) float64 {
+	tempValues := make([]float64, len(expMovs))
+	i := 0
+	for _, expMov := range expMovs {
+		tempValues[i] = expMov.mean
+		i++
+	}
+
+	sort.Float64s(tempValues)
+
+	var median float64
+	l := len(tempValues)
+	if l == 0 {
+		return 0
+	} else if l%2 == 0 {
+		median = (tempValues[l/2-1] + tempValues[l/2]) / 2
+	} else {
+		median = tempValues[l/2]
+	}
+
+	return median
+}
+
+func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64, chosenHeads hash.Events, nParents int, receivedStake pos.Weight) (float64, bool) {
+
+	// timePropConst := 1 / 20.0
+	medianT := timingMedianMean(h.TimingStats)
+	timePropConst := 1.0 / medianT
+
+	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	tNew := 0.0
+	if kNew < 1.0 {
+		tNew = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
+	} else {
+		tNew = tMax
+	}
+
+	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil) // calculate k for most recent self event
+	tPrev := 0.0
+
+	delt_k := 0.0
+	if kPrev == 0 {
+		// +++TODO loop until finding a past frame with an event. Prev could be very old!
+
+		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+
+		kPrev = h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		tPrev = tMin - (tMax - tPrev)
+
+		delt_k = tNew - tPrev
+
+	} else {
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		delt_k = tNew - tPrev
+	}
+
+	deltRealTime := passedTime * timePropConst
+	meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
+	// meanDelt := (deltK + deltRealTime) / 2 //arithmetic mean
+
+	selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	selfIdx := h.validators.GetIdx(selfID)
+	selfStake := h.validators.GetWeightByIdx(selfIdx)
+
+	sortedWeights := h.validators.SortedWeights()
+	minWeight := sortedWeights[len(sortedWeights)-1]
+
+	stakeEventRate := 1.0 / (1.0 + math.Log(float64(selfStake)) - math.Log(float64(minWeight)))
+	if meanDelt >= stakeEventRate {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
+}
+
+func (h *QuorumIndexer) UpdateTimingStats(value float64, source idx.ValidatorID) {
+	expMov := h.TimingStats[source]
+	if h.TimingStats[source].mean == 0.0 {
+		expMov.mean = value
+	} else {
+		expMov.mean = expMov.expCoeff*value + (1.0-expMov.expCoeff)*expMov.mean
+	}
+	deviation := value - expMov.mean
+	if expMov.variance == 0.0 {
+		expMov.variance = deviation * deviation
+	} else {
+		expMov.variance = expMov.expCoeff*deviation*deviation + (1.0-expMov.expCoeff)*expMov.variance
+	}
+	h.TimingStats[source] = expMov
 }
 
 func (h *QuorumIndexer) GetMetricOfViaParents(parents hash.Events) Metric {
