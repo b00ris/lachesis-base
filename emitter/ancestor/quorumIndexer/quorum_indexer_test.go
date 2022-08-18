@@ -45,8 +45,8 @@ func TestQI(t *testing.T) {
 	// numNodes := 70
 	// nodes := []int{20, 30, 40, 50, 60, 70, 80, 90, 100}
 	nodes := []int{20}
-	// stakeDist := stakeCumDist() // for stakes drawn from distribution
-	// stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
+	stakeDist := stakeCumDist()             // for stakes drawn from distribution
+	stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
 	for _, numNodes := range nodes {
 
 		weights := make([]pos.Weight, numNodes)
@@ -55,7 +55,7 @@ func TestQI(t *testing.T) {
 			weights[i] = pos.Weight(1)
 
 			// for non-equal stake
-			// weights[i] = pos.Weight(sampleDist(stakeRNG, stakeDist)) // take a random sample from stake data distribution
+			weights[i] = pos.Weight(sampleDist(stakeRNG, stakeDist)) // take a random sample from stake data distribution
 		}
 		testQI(t, weights)
 	}
@@ -63,7 +63,7 @@ func TestQI(t *testing.T) {
 
 func testQI(t *testing.T, weights []pos.Weight) {
 	eventCount := 50
-	// parentCount := []int{3,4,5,6,7,8,9,10}
+	// parentCount := []int{3, 4, 5, 6, 7, 8, 9, 10}
 	parentCount := []int{3}
 
 	meanDelay := 200
@@ -74,7 +74,7 @@ func testQI(t *testing.T, weights []pos.Weight) {
 		eventInterval[i] = 1 // this determines how many milliseconds the node waits before creating a new event
 	}
 	var metricParameter float64
-	metricParameter = 100 // a general purpose parameter for use in testign/development
+	metricParameter = 110 // a general purpose parameter for use in testign/development
 	// offlineNodes := false // all nodes create events
 	offlineNodes := true // only Quorum nodes create events
 	// for metricParameter > 0.0 {
@@ -83,7 +83,7 @@ func testQI(t *testing.T, weights []pos.Weight) {
 	for i := range parentCount {
 		offlineNodes = true
 		start := time.Now()
-		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
 		elapsed := time.Since(start)
 		fmt.Println("NEW took ", elapsed)
 
@@ -272,7 +272,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 				}
 				if process[i] {
 					// buffered event has all parents in the DAG and can now be processed
-					frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode])
+					frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, &quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode], time)
 					if frame > maxFrame {
 						// quorumIndexers[receiveNode].PrintSubgraphK(buffEvent.Frame()-1, buffEvent.ID())
 						maxFrame = frame
@@ -472,7 +472,7 @@ func updateHeads(newEvent dag.Event, heads *dag.Events) {
 	*heads = append(*heads, newEvent) //add newEvent to heads
 }
 
-func processEvent(input abft.EventStore, lchs *abft.TestLachesis, e *QITestEvent, quorumIndexer ancestor.QuorumIndexer, newQI bool, heads *dag.Events, self idx.ValidatorID) (frame idx.Frame) {
+func processEvent(input abft.EventStore, lchs *abft.TestLachesis, e *QITestEvent, quorumIndexer *ancestor.QuorumIndexer, newQI bool, heads *dag.Events, self idx.ValidatorID, time int) (frame idx.Frame) {
 	input.SetEvent(e)
 
 	lchs.DagIndexer.Add(e)
@@ -487,6 +487,7 @@ func processEvent(input abft.EventStore, lchs *abft.TestLachesis, e *QITestEvent
 		quorumIndexer.ProcessEvent(&e.BaseEvent, false)
 	}
 	updateHeads(e, heads)
+	quorumIndexer.UpdateTimingStats(float64(time)-float64(e.creationTime), e.Creator())
 	return lchs.DagIndexer.GetEvent(e.ID()).Frame()
 }
 
@@ -574,25 +575,41 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 	if len(e.Parents()) > 1 { // need at aleast one parent other than self
 
 		// ***Logistic Growth****
+		// if passedTime > times.minInterval {
+		// 	// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+		// 	kCond, metric := quorumIndexer.LogisticTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+		// 	if metric {
+		// 		// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+		// 		fmt.Println("k: ", kCond, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+		// 		// fmt.Print(",", float64(passedTime))
+		// 		return true
+		// 	}
+		// }
+
+		// ***Logistic Growth and Time****
 		if passedTime > times.minInterval {
 			// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
-			metric := quorumIndexer.LogisticTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+			_, metric := quorumIndexer.LogisticTimingConditionByCountAndTime(float64(passedTime), e.Parents(), nParents, newEventReceived.Sum())
 			if metric {
+				// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+				// fmt.Println("k: ", kCond, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+				// fmt.Print(",", float64(passedTime))
 				return true
 			}
 		}
 
 		// ***go-opera event timing***
-		// parents := e.Parents()
-		// metric := eventMetric(quorumIndexer.GetMetricOfViaParents(parents), e.Seq())
-		// metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric) // +++how does busyRate work?
-		// adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
-		// // fmt.Println(" Timing metric: ", adjustedPassedTime, " Condition: ", times.minInterval)
-		// // if adjustedPassedTime >= times.minInterval {
-		// if adjustedPassedTime >= int(metricParameter) {
-		// 	// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
-		// 	return true
-		// }
+		parents := e.Parents()
+		metric := eventMetric(quorumIndexer.GetMetricOfViaParents(parents), e.Seq())
+		metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric) // +++how does busyRate work?
+		adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
+		// fmt.Println(" Timing metric: ", adjustedPassedTime, " Condition: ", times.minInterval)
+		// if adjustedPassedTime >= times.minInterval {
+		if adjustedPassedTime >= int(metricParameter) {
+			// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
+			fmt.Print(",", float64(passedTime))
+			return true
+		}
 
 		// ***RECEIVED STAKE***
 		// fmt.Println(" Timing metric: ", float64(newEventReceived.Sum()), " Condition: ", (metricParameter)*float64(newEventReceived.Quorum))
