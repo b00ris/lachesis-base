@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Fantom-foundation/go-opera/utils/piecefunc"
 	"github.com/Fantom-foundation/lachesis-base/abft"
 	"github.com/Fantom-foundation/lachesis-base/abft/dagidx"
 	"github.com/Fantom-foundation/lachesis-base/abft/election"
@@ -33,7 +34,7 @@ type RootProgressMetrics struct {
 	// HeadFrame             idx.Frame
 	NewObservedRootWeight pos.WeightCounter
 	NewFCWeight           pos.WeightCounter
-	NewRootKnowledge      uint64
+	NewRootKnowledge      float64 //uint64
 }
 
 type ExpMov struct {
@@ -277,156 +278,214 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 	}
 
 	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
-	CurrentRootKnowledge := make([]KIdx, len(maxFrameRoots))
+	// CurrentRootKnowledge := make([]KIdx, len(maxFrameRoots))
 	HeadsRootKnowledge := make([]sortedKIdx, len(maxHeads))
 	for i, _ := range HeadsRootKnowledge {
 		HeadsRootKnowledge[i] = make([]KIdx, len(maxFrameRoots))
 	}
-	for j, root := range maxFrameRoots {
-		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, maxHeads, chosenHeads)
-		currentFCProgress := FCProgress[len(FCProgress)-1]
-
-		if currentFCProgress.Sum() <= h.validators.Quorum() {
-			CurrentRootKnowledge[j].K = float64(currentFCProgress.Sum())
-		} else {
-			CurrentRootKnowledge[j].K = float64(h.validators.Quorum())
-		}
-		CurrentRootKnowledge[j].Root = root
-
-		for i, _ := range maxHeads {
-			// Below metrics are computed in order of importance (most important first)
-			if FCProgress[i].HasQuorum() && !currentFCProgress.HasQuorum() {
-				// This means the root forkless causes the creator when head is a parent, but does not forkless cause without the head
-				rootProgressMetrics[i].NewFCWeight.Count(root.Slot.Validator)
-			}
-
-			if FCProgress[i].Sum() <= h.validators.Quorum() {
-				HeadsRootKnowledge[i][j].K = float64(FCProgress[i].Sum())
-			} else {
-				HeadsRootKnowledge[i][j].K = float64(h.validators.Quorum())
-			}
-			HeadsRootKnowledge[i][j].Root = root
-
-			if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
-				// this means that creator with head parent observes the root, but creator on its own does not
-				// i.e. this is a new root observed via the head
-				rootProgressMetrics[i].NewObservedRootWeight.Count(root.Slot.Validator)
-			}
-
-		}
-	}
-
-	sort.Sort(sortedKIdx(CurrentRootKnowledge))
-	var currentKnowledge uint64 = 0
-	var bestRootsStake pos.Weight = 0
-	for _, kidx := range CurrentRootKnowledge {
-		rootValidatorIdx := h.validators.GetIdx(kidx.Root.Slot.Validator)
-		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
-		if bestRootsStake >= h.validators.Quorum() {
-			break
-		} else if bestRootsStake+rootStake <= h.validators.Quorum() {
-			currentKnowledge += uint64(kidx.K) * uint64(rootStake)
-			bestRootsStake += rootStake
-		} else {
-			partialStake := h.validators.Quorum() - bestRootsStake
-			currentKnowledge += uint64(kidx.K) * uint64(partialStake)
-			bestRootsStake += partialStake // this should trigger the break condition above
-		}
-	}
 	for i, _ := range maxHeads {
-		sort.Sort(HeadsRootKnowledge[i])
-		rootProgressMetrics[i].NewRootKnowledge = 0
-		var bestRootsStake pos.Weight = 0
-		for _, kidx := range HeadsRootKnowledge[i] {
-			rootValidatorIdx := h.validators.GetIdx(kidx.Root.Slot.Validator)
-			rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
-			if bestRootsStake >= h.validators.Quorum() {
-				break
-			} else if bestRootsStake+rootStake <= h.validators.Quorum() {
-				rootProgressMetrics[i].NewRootKnowledge += uint64(kidx.K) * uint64(rootStake)
-				bestRootsStake += rootStake
-			} else {
-				partialStake := h.validators.Quorum() - bestRootsStake
-				rootProgressMetrics[i].NewRootKnowledge += uint64(kidx.K) * uint64(partialStake)
-				bestRootsStake += partialStake // this should trigger the break condition above
-			}
+		heads := make([]hash.Event, len(chosenHeads)+1)
+		for j, head := range chosenHeads {
+			heads[j] = head
 		}
-		rootProgressMetrics[i].NewRootKnowledge -= currentKnowledge
+		heads[len(heads)-1] = maxHeads[i]
+		rootProgressMetrics[i].NewRootKnowledge = h.EventRootKnowledgeQByCount(maxHeadFrame, h.SelfParentEvent, heads)
+
 	}
+
 	return rootProgressMetrics
 }
 
-func (h *QuorumIndexer) GetMetricsOfRootProgressOLD(heads hash.Events, chosenHeads hash.Events) []RootProgressMetrics {
-	// This function is indended to be used in the process of
-	// selecting event block parents from a set of head options.
-	// This function returns useful metrics for assessing
-	// how much a validator will progress toward producing a root when using head as a parent.
-	// creator denotes the validator creating a new event block.
-	// chosenHeads are heads that have already been selected
-	// head denotes the event block of another validator that is being considered as a potential parent.
+// func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads hash.Events) []RootProgressMetrics {
+// 	// This function is indended to be used in the process of
+// 	// selecting event block parents from a set of head options.
+// 	// This function returns useful metrics for assessing
+// 	// how much a validator will progress toward producing a root when using head as a parent.
+// 	// creator denotes the validator creating a new event block.
+// 	// chosenHeads are heads that have already been selected
+// 	// head denotes the event block of another validator that is being considered as a potential parent.
 
-	// find max frame number of self event block, and chosen heads
-	currentFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+// 	// find max frame number of self event block, and chosen heads
+// 	currentFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
-	// find frame number of each head, and max frame number
-	var maxHeadFrame idx.Frame = currentFrame
-	headFrame := make([]idx.Frame, len(heads))
+// 	// find frame number of each head, and max frame number
+// 	var maxHeadFrame idx.Frame = currentFrame
+// 	headFrame := make([]idx.Frame, len(heads))
 
-	for i, head := range heads {
-		headFrame[i] = h.Dagi.GetEvent(head).Frame()
-		if headFrame[i] > maxHeadFrame {
-			maxHeadFrame = headFrame[i]
-		}
-	}
+// 	for i, head := range heads {
+// 		headFrame[i] = h.Dagi.GetEvent(head).Frame()
+// 		if headFrame[i] > maxHeadFrame {
+// 			maxHeadFrame = headFrame[i]
+// 		}
+// 	}
 
-	for _, head := range chosenHeads {
-		if h.Dagi.GetEvent(head).Frame() > maxHeadFrame {
-			maxHeadFrame = h.Dagi.GetEvent(head).Frame()
-		}
-	}
+// 	for _, head := range chosenHeads {
+// 		if h.Dagi.GetEvent(head).Frame() > maxHeadFrame {
+// 			maxHeadFrame = h.Dagi.GetEvent(head).Frame()
+// 		}
+// 	}
 
-	// only retain heads with max frame number
-	var rootProgressMetrics []RootProgressMetrics
-	var maxHeads hash.Events
-	for i, head := range heads {
-		if headFrame[i] >= maxHeadFrame {
-			rootProgressMetrics = append(rootProgressMetrics, h.newRootProgressMetrics(i))
-			maxHeads = append(maxHeads, head)
-		}
-	}
-	// +++ToDo only retain chosenHeads with max frame number
+// 	// only retain heads with max frame number
+// 	var rootProgressMetrics []RootProgressMetrics
+// 	var maxHeads hash.Events
+// 	for i, head := range heads {
+// 		if headFrame[i] >= maxHeadFrame {
+// 			rootProgressMetrics = append(rootProgressMetrics, h.newRootProgressMetrics(i))
+// 			maxHeads = append(maxHeads, head)
+// 		}
+// 	}
 
-	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
-	//+++todo, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
-	for _, root := range maxFrameRoots {
-		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, maxHeads, chosenHeads)
+// 	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
+// 	CurrentRootKnowledge := make([]KIdx, len(maxFrameRoots))
+// 	HeadsRootKnowledge := make([]sortedKIdx, len(maxHeads))
+// 	for i, _ := range HeadsRootKnowledge {
+// 		HeadsRootKnowledge[i] = make([]KIdx, len(maxFrameRoots))
+// 	}
+// 	for j, root := range maxFrameRoots {
+// 		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, maxHeads, chosenHeads)
+// 		currentFCProgress := FCProgress[len(FCProgress)-1]
 
-		currentFCProgress := FCProgress[len(FCProgress)-1]
-		for i, _ := range maxHeads {
-			// Below metrics are computed in order of importance (most important first)
-			if FCProgress[i].HasQuorum() && !currentFCProgress.HasQuorum() {
-				// This means the root forkless causes the creator when head is a parent, but does not forkless cause without the head
-				rootProgressMetrics[i].NewFCWeight.Count(root.Slot.Validator)
-			}
+// 		if currentFCProgress.Sum() <= h.validators.Quorum() {
+// 			CurrentRootKnowledge[j].K = float64(currentFCProgress.Sum())
+// 		} else {
+// 			CurrentRootKnowledge[j].K = float64(h.validators.Quorum())
+// 		}
+// 		CurrentRootKnowledge[j].Root = root
 
-			if !FCProgress[i].HasQuorum() {
-				// if the root does not forkless cause even with the head, add improvement head makes toward forkless cause
-				rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
-				rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
-				rootProgressMetrics[i].NewRootKnowledge += uint64(rootStake) * uint64(FCProgress[i].Sum()-currentFCProgress.Sum())
+// 		for i, _ := range maxHeads {
+// 			// Below metrics are computed in order of importance (most important first)
+// 			if FCProgress[i].HasQuorum() && !currentFCProgress.HasQuorum() {
+// 				// This means the root forkless causes the creator when head is a parent, but does not forkless cause without the head
+// 				rootProgressMetrics[i].NewFCWeight.Count(root.Slot.Validator)
+// 			}
 
-				// rootProgressMetrics[i].NewRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
+// 			if FCProgress[i].Sum() <= h.validators.Quorum() {
+// 				HeadsRootKnowledge[i][j].K = float64(FCProgress[i].Sum())
+// 			} else {
+// 				HeadsRootKnowledge[i][j].K = float64(h.validators.Quorum())
+// 			}
+// 			HeadsRootKnowledge[i][j].Root = root
 
-				if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
-					// this means that creator with head parent observes the root, but creator on its own does not
-					// i.e. this is a new root observed via the head
-					rootProgressMetrics[i].NewObservedRootWeight.Count(root.Slot.Validator)
-				}
-			}
-		}
-	}
-	return rootProgressMetrics
-}
+// 			if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
+// 				// this means that creator with head parent observes the root, but creator on its own does not
+// 				// i.e. this is a new root observed via the head
+// 				rootProgressMetrics[i].NewObservedRootWeight.Count(root.Slot.Validator)
+// 			}
+
+// 		}
+// 	}
+
+// 	sort.Sort(sortedKIdx(CurrentRootKnowledge))
+// 	var currentKnowledge uint64 = 0
+// 	var bestRootsStake pos.Weight = 0
+// 	for _, kidx := range CurrentRootKnowledge {
+// 		rootValidatorIdx := h.validators.GetIdx(kidx.Root.Slot.Validator)
+// 		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+// 		if bestRootsStake >= h.validators.Quorum() {
+// 			break
+// 		} else if bestRootsStake+rootStake <= h.validators.Quorum() {
+// 			currentKnowledge += uint64(kidx.K) * uint64(rootStake)
+// 			bestRootsStake += rootStake
+// 		} else {
+// 			partialStake := h.validators.Quorum() - bestRootsStake
+// 			currentKnowledge += uint64(kidx.K) * uint64(partialStake)
+// 			bestRootsStake += partialStake // this should trigger the break condition above
+// 		}
+// 	}
+// 	for i, _ := range maxHeads {
+// 		sort.Sort(HeadsRootKnowledge[i])
+// 		rootProgressMetrics[i].NewRootKnowledge = 0
+// 		var bestRootsStake pos.Weight = 0
+// 		for _, kidx := range HeadsRootKnowledge[i] {
+// 			rootValidatorIdx := h.validators.GetIdx(kidx.Root.Slot.Validator)
+// 			rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+// 			if bestRootsStake >= h.validators.Quorum() {
+// 				break
+// 			} else if bestRootsStake+rootStake <= h.validators.Quorum() {
+// 				rootProgressMetrics[i].NewRootKnowledge += uint64(kidx.K) * uint64(rootStake)
+// 				bestRootsStake += rootStake
+// 			} else {
+// 				partialStake := h.validators.Quorum() - bestRootsStake
+// 				rootProgressMetrics[i].NewRootKnowledge += uint64(kidx.K) * uint64(partialStake)
+// 				bestRootsStake += partialStake // this should trigger the break condition above
+// 			}
+// 		}
+// 		rootProgressMetrics[i].NewRootKnowledge -= currentKnowledge
+// 	}
+// 	return rootProgressMetrics
+// }
+
+// func (h *QuorumIndexer) GetMetricsOfRootProgressOLD(heads hash.Events, chosenHeads hash.Events) []RootProgressMetrics {
+// 	// This function is indended to be used in the process of
+// 	// selecting event block parents from a set of head options.
+// 	// This function returns useful metrics for assessing
+// 	// how much a validator will progress toward producing a root when using head as a parent.
+// 	// creator denotes the validator creating a new event block.
+// 	// chosenHeads are heads that have already been selected
+// 	// head denotes the event block of another validator that is being considered as a potential parent.
+
+// 	// find max frame number of self event block, and chosen heads
+// 	currentFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+// 	// find frame number of each head, and max frame number
+// 	var maxHeadFrame idx.Frame = currentFrame
+// 	headFrame := make([]idx.Frame, len(heads))
+
+// 	for i, head := range heads {
+// 		headFrame[i] = h.Dagi.GetEvent(head).Frame()
+// 		if headFrame[i] > maxHeadFrame {
+// 			maxHeadFrame = headFrame[i]
+// 		}
+// 	}
+
+// 	for _, head := range chosenHeads {
+// 		if h.Dagi.GetEvent(head).Frame() > maxHeadFrame {
+// 			maxHeadFrame = h.Dagi.GetEvent(head).Frame()
+// 		}
+// 	}
+
+// 	// only retain heads with max frame number
+// 	var rootProgressMetrics []RootProgressMetrics
+// 	var maxHeads hash.Events
+// 	for i, head := range heads {
+// 		if headFrame[i] >= maxHeadFrame {
+// 			rootProgressMetrics = append(rootProgressMetrics, h.newRootProgressMetrics(i))
+// 			maxHeads = append(maxHeads, head)
+// 		}
+// 	}
+// 	// +++ToDo only retain chosenHeads with max frame number
+
+// 	maxFrameRoots := h.lachesis.Store.GetFrameRoots(maxHeadFrame)
+// 	//+++todo, does Store.GetFrameRoots return roots for an undecided frame (or only for decided frames)? If no, need to get roots elsewhere
+// 	for _, root := range maxFrameRoots {
+// 		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(h.SelfParentEvent, root.ID, maxHeads, chosenHeads)
+
+// 		currentFCProgress := FCProgress[len(FCProgress)-1]
+// 		for i, _ := range maxHeads {
+// 			// Below metrics are computed in order of importance (most important first)
+// 			if FCProgress[i].HasQuorum() && !currentFCProgress.HasQuorum() {
+// 				// This means the root forkless causes the creator when head is a parent, but does not forkless cause without the head
+// 				rootProgressMetrics[i].NewFCWeight.Count(root.Slot.Validator)
+// 			}
+
+// 			if !FCProgress[i].HasQuorum() {
+// 				// if the root does not forkless cause even with the head, add improvement head makes toward forkless cause
+// 				rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+// 				rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+// 				rootProgressMetrics[i].NewRootKnowledge += uint64(rootStake) * uint64(FCProgress[i].Sum()-currentFCProgress.Sum())
+
+// 				// rootProgressMetrics[i].NewRootKnowledge += FCProgress[i].Sum() - currentFCProgress.Sum()
+
+// 				if FCProgress[i].Sum() > 0 && currentFCProgress.Sum() == 0 {
+// 					// this means that creator with head parent observes the root, but creator on its own does not
+// 					// i.e. this is a new root observed via the head
+// 					rootProgressMetrics[i].NewObservedRootWeight.Count(root.Slot.Validator)
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return rootProgressMetrics
+// }
 
 func maxFrame(a idx.Frame, b idx.Frame) idx.Frame {
 	if a > b {
@@ -483,7 +542,7 @@ func (h *QuorumIndexer) PrintSubgraphK(frame idx.Frame, event hash.Event) {
 	allK := make([]float64, len(events))
 	i := 0
 	for event := range events {
-		allK[i] = h.eventRootKnowledgeQByCount(frame, event.ID(), nil)
+		allK[i] = h.EventRootKnowledgeQByCount(frame, event.ID(), nil)
 		i++
 	}
 	sort.Float64s(allK)
@@ -535,8 +594,9 @@ func (h *QuorumIndexer) eventRootKnowledgeByCount(frame idx.Frame, event hash.Ev
 	return FCroots, kNew
 }
 
-func (h *QuorumIndexer) eventRootKnowledgeQByCount(frame idx.Frame, event hash.Event, chosenHeads hash.Events) float64 {
+func (h *QuorumIndexer) EventRootKnowledgeQByCount(frame idx.Frame, event hash.Event, chosenHeads hash.Events) float64 {
 	// calculate k by count for event under DAG progress event timing consideration
+	// event input is the previous self event
 	roots := h.lachesis.Store.GetFrameRoots(frame)
 
 	weights := h.validators.SortedWeights()
@@ -562,11 +622,10 @@ func (h *QuorumIndexer) eventRootKnowledgeQByCount(frame idx.Frame, event hash.E
 					stake += weight
 					numForQ++
 				}
-
 			}
 			RootKnowledge[i].K = float64(numCounted) / float64(numForQ)
 		}
-		RootKnowledge[i].Root = root // record which root this is for
+		RootKnowledge[i].Root = root // record which root the k_i is for
 	}
 
 	//sort roots by k_i value to ge the best roots
@@ -669,8 +728,8 @@ func (h *QuorumIndexer) LogisticTimingDeltat(chosenHeads hash.Events, nParents i
 		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
 	}
 
-	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
-	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
+	kNew := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	kPrev := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
 
 	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
 	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
@@ -686,7 +745,7 @@ func (h *QuorumIndexer) LogisticTimingDeltat(chosenHeads hash.Events, nParents i
 	if kPrev == 0 {
 		// +++TODO loop until finding a past frame with an event. Prev could be very old!
 
-		kPrev := h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+		kPrev := h.EventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
 
 		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
 
@@ -704,23 +763,23 @@ func (h *QuorumIndexer) LogisticTimingConditionByCount(chosenHeads hash.Events, 
 		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
 	}
 
-	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
-	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
+	kNew := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	kPrev := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)        // calculate k for most recent self event
 	kCond := 0.0
-	if kPrev == 0 {
-		// +++TODO loop until finding a past frame with an event. Prev could be very old!
-		kPrev = h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
-		tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
-		tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+	// if kPrev == 0 {
+	// 	// +++TODO loop until finding a past frame with an event. Prev could be very old!
+	// 	kPrev = h.EventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+	// 	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	// 	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
 
-		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
-		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+	// 	kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+	// 	tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
 
-		tCond := tMin - (tMax - tPrev) + 1.0
-		kCond = 1.0 / (1.0 + math.Exp(-tCond*math.Log(float64(nParents))))
-	} else {
-		kCond = float64(nParents) * kPrev / (float64(nParents)*kPrev - kPrev + 1.0) // This condition is based on logistic growth
-	}
+	// 	tCond := tMin - (tMax - tPrev) + 1.0
+	// 	kCond = 1.0 / (1.0 + math.Exp(-tCond*math.Log(float64(nParents))))
+	// } else {
+	kCond = float64(nParents) * kPrev / (float64(nParents)*kPrev - kPrev + 1.0) // This condition is based on logistic growth
+	// }
 
 	if kNew >= kCond {
 		// fmt.Print(", ", kNew)
@@ -753,21 +812,19 @@ func timingMedianMean(expMovs map[idx.ValidatorID]ExpMov) float64 {
 	return median
 }
 
-func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64, chosenHeads hash.Events, nParents int, receivedStake pos.Weight) (float64, bool) {
+func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents int) Metric {
+	// this function returns t_k, the logistic time difference between the current event being considered and the previous self event
+	// t_k can be thought of as time difference in units of `DAG progress time'
 
-	// timePropConst := 1 / 20.0
-	medianT := timingMedianMean(h.TimingStats)
-	timePropConst := 1.0 / medianT
-
-	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
-	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
-
-	// find max frame when parents are selected
+	framePrev := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+	frameNew := framePrev
+	// find if a head's frame is ahead of prev self event's frame
 	for _, head := range chosenHeads {
-		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+		frameNew = maxFrame(frameNew, h.Dagi.GetEvent(head).Frame())
 	}
 
-	kNew := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	kNew := h.EventRootKnowledgeQByCount(frameNew, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
 	tNew := 0.0
 	if kNew < 1.0 {
 		tNew = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
@@ -775,39 +832,77 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64
 		tNew = tMax
 	}
 
-	kPrev := h.eventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil) // calculate k for most recent self event
+	kPrev := h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
+
 	tPrev := 0.0
-
 	delt_k := 0.0
-	if kPrev == 0 {
-		// +++TODO loop until finding a past frame with an event. Prev could be very old!
-
+	if framePrev == frameNew {
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	} else {
 		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
 		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
-
-		kPrev = h.eventRootKnowledgeQByCount(frame-1, h.SelfParentEvent, nil) // calculate k for most recent self event
+		kPrev = h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
 		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
-		tPrev = tMin - (tMax - tPrev)
-
-		delt_k = tNew - tPrev
-
-	} else {
-		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
-		delt_k = tNew - tPrev
+		diffFrames := frameNew - framePrev // number of frames prev is behind new
+		tFrame := tMax - tMin              // duration of an entire frame
+		tPrev = tPrev - tFrame*float64(diffFrames)
 	}
+	delt_k = tNew - tPrev
+	return Metric(delt_k * piecefunc.DecimalUnit)
+}
+
+func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64, chosenHeads hash.Events, nParents int) (float64, bool) {
+
+	// timePropConst := 1 / 110.0
+	medianT := timingMedianMean(h.TimingStats)
+	timePropConst := 1.0 / medianT
+
+	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+	framePrev := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+	frameNew := framePrev
+	// find if a head's frame is ahead of prev self event's frame
+	for _, head := range chosenHeads {
+		frameNew = maxFrame(frameNew, h.Dagi.GetEvent(head).Frame())
+	}
+
+	kNew := h.EventRootKnowledgeQByCount(frameNew, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	tNew := 0.0
+	if kNew < 1.0 {
+		tNew = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
+	} else {
+		tNew = tMax
+	}
+
+	kPrev := h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
+
+	tPrev := 0.0
+	delt_k := 0.0
+	if framePrev == frameNew {
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	} else {
+		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+		kPrev = h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		diffFrames := frameNew - framePrev // number of frames prev is behind new
+		tFrame := tMax - tMin              // duration of an entire frame
+		tPrev = tPrev - tFrame*float64(diffFrames)
+	}
+	delt_k = tNew - tPrev
 
 	deltRealTime := passedTime * timePropConst
 	meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
 	// meanDelt := (deltK + deltRealTime) / 2 //arithmetic mean
 
-	selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
-	selfIdx := h.validators.GetIdx(selfID)
-	selfStake := h.validators.GetWeightByIdx(selfIdx)
+	// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	// selfIdx := h.validators.GetIdx(selfID)
+	// selfStake := h.validators.GetWeightByIdx(selfIdx)
 
-	sortedWeights := h.validators.SortedWeights()
-	minWeight := sortedWeights[len(sortedWeights)-1]
+	// sortedWeights := h.validators.SortedWeights()
+	// minWeight := sortedWeights[len(sortedWeights)-1]
 
-	stakeEventRate := 1.0 / (1.0 + math.Log(float64(selfStake)) - math.Log(float64(minWeight)))
+	// stakeEventRate := 1.0 / (1.0 + math.Log(float64(selfStake)) - math.Log(float64(minWeight))) // an idea for adjusting timing based on stake
+	stakeEventRate := 1.0
 	if meanDelt >= stakeEventRate {
 		// fmt.Print(", ", kNew)
 		return kNew, true
