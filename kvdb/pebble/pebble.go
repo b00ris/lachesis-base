@@ -2,6 +2,7 @@ package pebble
 
 import (
 	"fmt"
+	"path"
 	"sync"
 
 	"github.com/cockroachdb/pebble"
@@ -83,6 +84,8 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 		WALBytesPerSync:          0,                                     // default 0 (matches RocksDB = no background syncing)
 		MaxConcurrentCompactions: 3,                                     // default 1, important for big imports performance
 	})
+
+	println(path, db.Metrics().String())
 
 	if err != nil {
 		return nil, err
@@ -184,8 +187,9 @@ func (db *Database) Delete(key []byte) error {
 // database until a final write is called.
 func (db *Database) NewBatch() kvdb.Batch {
 	return &batch{
-		db: db.underlying,
-		b:  db.underlying.NewBatch(),
+		filename: db.filename,
+		db:       db.underlying,
+		b:        db.underlying.NewBatch(),
 	}
 }
 
@@ -352,9 +356,10 @@ func (s *snapshot) Release() {
 // batch is a write-only pebble batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type batch struct {
-	db   *pebble.DB
-	b    *pebble.Batch
-	size int
+	db       *pebble.DB
+	b        *pebble.Batch
+	size     int
+	filename string
 }
 
 // Put inserts the given value into the batch for later committing.
@@ -376,8 +381,16 @@ func (b *batch) ValueSize() int {
 	return b.size
 }
 
+var iii = 0
+
 // Write flushes any accumulated data to disk.
 func (b *batch) Write() error {
+	if path.Base(b.filename) == "evm-data" {
+		if iii % 1000 == 0 {
+			println(b.filename, b.db.Metrics().String())
+		}
+		iii++
+	}
 	return b.db.Apply(b.b, pebble.NoSync)
 }
 
