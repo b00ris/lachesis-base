@@ -44,7 +44,7 @@ type QITestEvent struct {
 func TestQI(t *testing.T) {
 	// numNodes := 70
 	// nodes := []int{20, 30, 40, 50, 60, 70, 80, 90, 100}
-	nodes := []int{20}
+	nodes := []int{70}
 	stakeDist := stakeCumDist()             // for stakes drawn from distribution
 	stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
 	for _, numNodes := range nodes {
@@ -64,7 +64,8 @@ func TestQI(t *testing.T) {
 func testQI(t *testing.T, weights []pos.Weight) {
 	eventCount := 50
 	// parentCount := []int{3, 4, 5, 6, 7, 8, 9, 10}
-	parentCount := []int{3}
+	QIParentCount := []int{5}
+	randParentCount := []int{5}
 
 	meanDelay := 200
 	stdDelay := 50
@@ -80,16 +81,16 @@ func testQI(t *testing.T, weights []pos.Weight) {
 	// for metricParameter > 0.0 {
 	fmt.Println("")
 	fmt.Println("Metric Parameter: ", metricParameter)
-	for i := range parentCount {
+	for i := range QIParentCount {
 		offlineNodes = true
 		start := time.Now()
-		testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		// testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
 		elapsed := time.Since(start)
 		fmt.Println("Root progress parent selection, quorum online. Took ", elapsed)
 
 		offlineNodes = false
 		start = time.Now()
-		testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+		testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
 		elapsed = time.Since(start)
 		fmt.Println("Root progress parent selection, all online. Took ", elapsed)
 
@@ -109,11 +110,12 @@ func testQI(t *testing.T, weights []pos.Weight) {
 	// }
 }
 
-func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int, parentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int, metricParameter float64, offlineNodes bool) {
-	randSrc := rand.New(rand.NewSource(0))   // use a fixed seed of 0 for comparison between runs
-	delayRNG := rand.New(rand.NewSource(0))  // use a fixed seed of 0 for comparison between runs
-	randEvRNG := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
-	randEvRate := 0.00                       // sets the probability that an event will be created randomly
+func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int, QIParentCount int, randParentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int, metricParameter float64, offlineNodes bool) {
+	randSrc := rand.New(rand.NewSource(0))       // use a fixed seed of 0 for comparison between runs
+	randParentRNG := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
+	delayRNG := rand.New(rand.NewSource(0))      // use a fixed seed of 0 for comparison between runs
+	randEvRNG := rand.New(rand.NewSource(0))     // use a fixed seed of 0 for comparison between runs
+	randEvRate := 0.00                           // sets the probability that an event will be created randomly
 	delayDist := delayCumDist()
 	maxDelay = len(delayDist) + 10
 
@@ -196,6 +198,8 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		eventCreationInterval[i] = eventInterval[i]
 		// minimum interval between creating events so that large stake nodes have smaller interval and create more events
 		// eventCreationInterval[i] = int(float64(eventInterval[i]) * float64(sortWeights[len(sortWeights)-1]) / float64(weights[i]))
+
+		// eventCreationInterval[i] = int(80 * float64(sortWeights[0]) / float64(weights[i]))
 		if eventCreationInterval[i] > longestInterval {
 			longestInterval = eventCreationInterval[i] // longest interval is needed later for checking if the network stalls (no events are produced)
 		}
@@ -228,7 +232,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 	time := -1
 
 	noNewEvents := 0
-	tMax := 30000 // in units of milliseconds; 60 000 = simulation of 1 minute of network activity
+	tMax := 10000 // in units of milliseconds; 60 000 = simulation of 1 minute of network activity
 	// now start the simulation
 	for time < tMax {
 		// move forward one timestep
@@ -236,10 +240,10 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		time++
 		noNewEvents++
 		if noNewEvents > maxDelay+longestInterval+10 {
-			fmt.Println("")
-			fmt.Println("EVENT CREATION STALLED")
-			fmt.Println("")
-			break
+			// fmt.Println("")
+			// fmt.Println("EVENT CREATION STALLED")
+			// fmt.Println("")
+			// break
 		}
 		// Check to see if new events are received by nodes
 		// if they are, do the appropriate updates for the received event
@@ -337,7 +341,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 
 				quorumIndexers[self].SelfParentEvent = selfParent[self].ID() // quorumIndexer needs to know the self's previous event
 
-				if len(heads) < parentCount-1 {
+				if len(heads) < QIParentCount+randParentCount-1 {
 					tooFewHeads = 1 // any parent selection method will give the same result (all available heads), count occurances
 				} else {
 					tooFewHeads = 0
@@ -347,7 +351,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 					// need at least one head to select parents
 
 					//iteratively select the best parent from the list of heads
-					for j := 0; j < parentCount-1; j++ {
+					for j := 0; j < QIParentCount-1; j++ {
 						var best int
 						if isLeaf[self] {
 							best = randSrc.Intn(len(heads))
@@ -366,6 +370,18 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 							break
 						}
 					}
+					//now select random parents +++TODO make this before or after QI selection?
+					for j := 0; j < randParentCount-1; j++ {
+						if len(heads) <= 0 {
+							break
+						}
+						randParent := randParentRNG.Intn(len(heads))
+						parents = append(parents, heads[randParent])
+						// remove chosen parent from head options
+						heads[randParent] = heads[len(heads)-1]
+						heads = heads[:len(heads)-1]
+					}
+
 				}
 
 				// parent selection is complete, add selected parents to new event
@@ -396,7 +412,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 				createRandEvent := randEvRNG.Float64() < randEvRate // used for introducing randomly created events
 				if online[creator] == true {
 					// self is online
-					if createRandEvent || isLeaf[self] || readyToEmit(newQI, quorumIndexers[self], *e, busyRate, &eTimes[self], metricParameter, newEventReceived[self], parentCount, idx.Validator(nodeCount)) {
+					if createRandEvent || isLeaf[self] || readyToEmit(newQI, quorumIndexers[self], *e, busyRate, &eTimes[self], metricParameter, newEventReceived[self], QIParentCount+randParentCount, idx.Validator(nodeCount), online) {
 						//create an event if (i) leaf event, or (ii) event timing condition is met, or (iii) a random event is created
 						isLeaf[self] = false                          // only create one leaf event
 						noNewEvents = 0                               //reset timer counting time interval during which no event has been created
@@ -439,7 +455,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		fmt.Println("Stake: ", weights[i], "events: ", nEv, " events/stake: ", float64(nEv)/float64(weights[i]))
 	}
 	fmt.Println("Max Frame: ", maxFrame)
-	fmt.Println("Time ", float64(time)/1000.0)
+	fmt.Println("Time ", float64(time)/1000.0, " seconds")
 	fmt.Println("Frames per second: ", (1000.0*float64(maxFrame))/float64(time))
 	fmt.Println("Number of Events: ", totalEventsComplete)
 
@@ -454,7 +470,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 
 	fmt.Println("Number of nodes: ", nodeCount)
 	fmt.Println("Number of nodes online: ", numOnlineNodes)
-	fmt.Println("Max Parents:", parentCount)
+	fmt.Println("Max Total Parents: ", QIParentCount+randParentCount, " Max QI Parents:", QIParentCount, " Max Random Parents", randParentCount)
 	fmt.Println("Fraction of events with equal or fewer heads than desired parents: ", float64(tooFewHeadsCtr)/float64(totalEventsComplete))
 }
 
@@ -564,7 +580,7 @@ func delayCumDist() (cumDist []float64) {
 	return cumDist
 }
 
-func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent, busyRate *rate.Gauge, times *emissionTimes, metricParameter float64, newEventReceived pos.WeightCounter, nParents int, nodeCount idx.Validator) (ready bool) {
+func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent, busyRate *rate.Gauge, times *emissionTimes, metricParameter float64, newEventReceived pos.WeightCounter, nParents int, nodeCount idx.Validator, online map[idx.ValidatorID]bool) (ready bool) {
 	passedTime := times.nowTime - times.prevTime
 	// if passedTime >= maxEmissionInterval {
 	// maximum limit of event emission interval reached, so emit a new event
@@ -574,7 +590,20 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 
 	if len(e.Parents()) > 1 { // need at aleast one parent other than self
 
-		// ***Logistic Growth****
+		// ***Logistic Online Growth (requries a reliable estimate of which nodes are online)****
+		if passedTime > times.minInterval {
+			// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+			kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnline(e.Parents(), nParents, online)
+			if metric {
+				// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+				// fmt.Println("k: ", kNew, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+				fmt.Print(",", kNew)
+				// fmt.Print(",", float64(passedTime))
+				return true
+			}
+		}
+
+		// ***Logistic Quorum Growth****
 		// if passedTime > times.minInterval {
 		// 	// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
 		// 	kNew, metric := quorumIndexer.LogisticTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
@@ -583,6 +612,19 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 		// 		// fmt.Println("k: ", kNew, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
 		// 		fmt.Print(",", kNew)
 		// 		// fmt.Print(",", float64(passedTime))
+		// 		return true
+		// 	}
+		// }
+
+		// ***Logistic Online Growth and Time****
+		// if passedTime > times.minInterval {
+		// 	// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+		// 	kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnlineAndTime(float64(passedTime), e.Parents(), nParents, online)
+		// 	if metric {
+		// 		// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+		// 		// fmt.Println("k: ", kCond, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+		// 		// fmt.Print(",", float64(passedTime))
+		// 		fmt.Print(",", kNew)
 		// 		return true
 		// 	}
 		// }
@@ -602,29 +644,29 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 
 		// ***go-opera logistic event timing***
 		// this is very similar to the ***Logistic Growth and Time**** condition above, but written in the format of previous timing functions
-		parents := e.Parents()
-		metric := eventMetricLogistic(quorumIndexer.GetMetricOfLogistic(parents, len(parents)), e.Seq())
+		// parents := e.Parents()
+		// metric := eventMetricLogistic(quorumIndexer.GetMetricOfLogistic(parents, len(parents)), e.Seq())
 
-		// +++TODO what is the reasoning for the adjustment based on number of nodes and busy rate? A network size adjustment isn't needed
-		// unless it is required as part of the busy rate adjustment
-		// busy rate is a measurement of tx rate, but tx are not simulated so the function makes no adjustment in these simulations
-		metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric)
-		adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
-		// the below condition is written in the form of the existing go-opera timing condition (where metricParameter=110)
-		// however in the context of logistic growth it should be interpreted as metricParameter being a factor that transforms between
-		// units of 'DAG progress' time and real time in milliseconds
-		// in current go-opera metricParameter is fixed at 110; however, this could be changed so that it adjusts to network conditions
-		// by using measurements of latencies obtained from differences in event creation and receive times,
-		// see an implementation in LogisticTimingConditionByCountAndTime via timingMedianMean
-		// adjustedPassedTime is then (aside from a factor of metricParameter unit scaling) the squared geometric mean of the two times
-		if adjustedPassedTime >= int(metricParameter) {
-			// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
-			fmt.Print("(")
-			fmt.Print(float64(passedTime))                               // print real time elapsed in milliseconds
-			fmt.Print(", ", float64(metric)*metricParameter/DecimalUnit) // print DAG progress time converted to milliseconds
-			fmt.Print(")")
-			return true
-		}
+		// // // +++TODO what is the reasoning for the adjustment based on number of nodes and busy rate? A network size adjustment isn't needed
+		// // // unless it is required as part of the busy rate adjustment
+		// // // busy rate is a measurement of tx rate, but tx are not simulated so the function makes no adjustment in these simulations
+		// metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric)
+		// adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
+		// // the below condition is written in the form of the existing go-opera timing condition (where metricParameter=110)
+		// // however in the context of logistic growth it should be interpreted as metricParameter being a factor that transforms between
+		// // units of 'DAG progress' time and real time in milliseconds
+		// // in current go-opera metricParameter is fixed at 110; however, this could be changed so that it adjusts to network conditions
+		// // by using measurements of latencies obtained from differences in event creation and receive times,
+		// // see an implementation in LogisticTimingConditionByCountAndTime via timingMedianMean
+		// // adjustedPassedTime is then (aside from a factor of metricParameter unit scaling) the squared geometric mean of the two times
+		// if adjustedPassedTime >= int(metricParameter) {
+		// 	// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
+		// 	// fmt.Print("(")
+		// 	// fmt.Print(float64(passedTime))                               // print real time elapsed in milliseconds
+		// 	// fmt.Print(", ", float64(metric)*metricParameter/DecimalUnit) // print DAG progress time converted to milliseconds
+		// 	// fmt.Print(")")
+		// 	return true
+		// }
 
 		// // ***go-opera event timing***
 		// parents := e.Parents()
@@ -635,7 +677,7 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 		// // if adjustedPassedTime >= times.minInterval {
 		// if adjustedPassedTime >= int(metricParameter) {
 		// 	// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
-		// 	fmt.Print(",", float64(passedTime))
+		// 	// fmt.Print(",", float64(passedTime))
 		// 	return true
 		// }
 
