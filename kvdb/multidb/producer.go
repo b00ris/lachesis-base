@@ -113,7 +113,6 @@ func (p *Producer) handleRoute(db kvdb.Store, req string, route Route) error {
 		}
 	}
 	// not found
-	println("not found", req, route.Table)
 	records = append(records, TableRecord{
 		Req:   req,
 		Table: route.Table,
@@ -133,6 +132,9 @@ func (p *Producer) OpenDB(req string) (kvdb.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isEmptyDB(table.New(db, []byte(route.Table))) {
+		println("empty", req, route.Type, route.Name, route.Table)
+	}
 	err = p.handleRoute(db, req, route)
 	if err != nil {
 		return nil, err
@@ -146,6 +148,12 @@ func (p *Producer) OpenDB(req string) (kvdb.Store, error) {
 		cdb.Store = table.New(db, []byte(route.Table))
 	}
 	return cdb, nil
+}
+
+func isEmptyDB(db kvdb.Iteratee) bool {
+	it := db.NewIterator(nil, nil)
+	defer it.Release()
+	return !it.Next()
 }
 
 // Names of existing databases.
