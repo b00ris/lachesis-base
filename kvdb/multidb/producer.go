@@ -113,6 +113,7 @@ func (p *Producer) handleRoute(db kvdb.Store, req string, route Route) error {
 		}
 	}
 	// not found
+	println("not found", req, route.Table)
 	records = append(records, TableRecord{
 		Req:   req,
 		Table: route.Table,
