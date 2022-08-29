@@ -87,6 +87,14 @@ var adjustCache = piecefunc.NewFunc([]piecefunc.Dot{
 	},
 })
 
+func aligned64kb(v int) int {
+	base := 64 * opt.KiB
+	if v < base {
+		return v
+	}
+	return v / base * base
+}
+
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(path string, cache int, handles int, close func() error, drop func()) (*Database, error) {
@@ -94,13 +102,12 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 	if handles < minHandles {
 		handles = minHandles
 	}
-	cache = int(adjustCache(uint64(cache)))
 
 	// Open the db and recover any potential corruptions
 	db, err := leveldb.OpenFile(path, &opt.Options{
 		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2,
-		WriteBuffer:            cache / 4, // Two of these are used internally
+		BlockCacheCapacity:     aligned64kb(cache / 2),
+		WriteBuffer:            aligned64kb(cache / 4), // Two of these are used internally
 		Filter:                 filter.NewBloomFilter(10),
 	})
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {

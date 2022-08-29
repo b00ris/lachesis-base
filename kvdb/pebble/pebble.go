@@ -72,16 +72,24 @@ var adjustCache = piecefunc.NewFunc([]piecefunc.Dot{
 	},
 })
 
+func aligned64kb(v int) int {
+	base := 64 * opt.KiB
+	if v < base {
+		return v
+	}
+	return v / base * base
+}
+
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(path string, cache int, handles int, close func() error, drop func()) (*Database, error) {
 	cache = int(adjustCache(uint64(cache)))
 	db, err := pebble.Open(path, &pebble.Options{
-		Cache:                    pebble.NewCache(int64(cache * 2 / 3)), // default 8 MB
-		MemTableSize:             cache / 3,                             // default 4 MB
-		MaxOpenFiles:             handles,                               // default 1000
-		WALBytesPerSync:          0,                                     // default 0 (matches RocksDB = no background syncing)
-		MaxConcurrentCompactions: 3,                                     // default 1, important for big imports performance
+		Cache:                    pebble.NewCache(int64(aligned64kb(cache * 2 / 3))), // default 8 MB
+		MemTableSize:             aligned64kb(cache / 3),                             // default 4 MB
+		MaxOpenFiles:             handles,                                            // default 1000
+		WALBytesPerSync:          0,                                                  // default 0 (matches RocksDB = no background syncing)
+		MaxConcurrentCompactions: 3,                                                  // default 1, important for big imports performance
 	})
 
 	if err != nil {
