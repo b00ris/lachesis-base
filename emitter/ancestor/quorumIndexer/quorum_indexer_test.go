@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,73 +45,75 @@ type QITestEvent struct {
 func TestQI(t *testing.T) {
 	// numNodes := 70
 	// nodes := []int{20, 30, 40, 50, 60, 70, 80, 90, 100}
-	nodes := []int{70}
-	stakeDist := stakeCumDist()             // for stakes drawn from distribution
-	stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
+	nodes := []int{20}
+	// stakeDist := stakeCumDist()             // for stakes drawn from distribution
+	// stakeRNG := rand.New(rand.NewSource(0)) // for stakes drawn from distribution
 	for _, numNodes := range nodes {
 
 		weights := make([]pos.Weight, numNodes)
-		for i := range weights {
+		for i, _ := range weights {
 			//for equal stake
 			weights[i] = pos.Weight(1)
 
 			// for non-equal stake
-			weights[i] = pos.Weight(sampleDist(stakeRNG, stakeDist)) // take a random sample from stake data distribution
+			// weights[i] = pos.Weight(sampleDist(stakeRNG, stakeDist)) // take a random sample from stake data distribution
 		}
 		testQI(t, weights)
 	}
 }
 
 func testQI(t *testing.T, weights []pos.Weight) {
-	eventCount := 50
+
 	// parentCount := []int{3, 4, 5, 6, 7, 8, 9, 10}
-	QIParentCount := []int{5}
-	randParentCount := []int{5}
+	QIParentCount := []int{3}
+	randParentCount := []int{0}
 
 	meanDelay := 200
 	stdDelay := 50
 	maxDelay := meanDelay + 3*stdDelay + 1
 	eventInterval := make([]int, len(weights))
 	for i := range eventInterval {
-		eventInterval[i] = 1 //8000 // this determines how many milliseconds each node waits after creating an event to be allowed to create its next event
+		eventInterval[i] = 10 //8000 // this determines how many milliseconds each node waits after creating an event to be allowed to create its next event
 	}
 	var metricParameter float64
-	metricParameter = 110 // a general purpose parameter for use in testign/development
+	metricParameter = 90 // a general purpose parameter for use in testign/development
 	// offlineNodes := false // all nodes create events
 	offlineNodes := true // only Quorum nodes create events
-	// for metricParameter > 0.0 {
-	fmt.Println("")
-	fmt.Println("Metric Parameter: ", metricParameter)
-	for i := range QIParentCount {
-		offlineNodes = true
-		start := time.Now()
-		// testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-		elapsed := time.Since(start)
-		fmt.Println("Root progress parent selection, quorum online. Took ", elapsed)
+	for metricParameter > 0.0 {
+		fmt.Println("")
+		fmt.Println("Metric Parameter: ", metricParameter)
+		for i := range QIParentCount {
+			offlineNodes = true
+			start := time.Now()
+			testQuorumIndexerLatency(t, weights, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+			elapsed := time.Since(start)
+			fmt.Println("Root progress parent selection, quorum online. Took ", elapsed)
 
-		offlineNodes = false
-		start = time.Now()
-		testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-		elapsed = time.Since(start)
-		fmt.Println("Root progress parent selection, all online. Took ", elapsed)
+			offlineNodes = false
+			start = time.Now()
+			testQuorumIndexerLatency(t, weights, QIParentCount[i], randParentCount[i], true, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+			elapsed = time.Since(start)
+			fmt.Println("Root progress parent selection, all online. Took ", elapsed)
 
-		// offlineNodes = true
-		// start = time.Now()
-		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-		// elapsed = time.Since(start)
-		// fmt.Println("HighestBefore parent selection, quourm online. Took ", elapsed)
+			// offlineNodes = true
+			// start = time.Now()
+			// testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+			// elapsed = time.Since(start)
+			// fmt.Println("HighestBefore parent selection, quourm online. Took ", elapsed)
 
-		// offlineNodes = false
-		// start = time.Now()
-		// testQuorumIndexerLatency(t, weights, eventCount, parentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
-		// elapsed = time.Since(start)
-		// fmt.Println("HighestBefore parent selection, all online. Took ", elapsed)
+			// offlineNodes = false
+			// start = time.Now()
+			// testQuorumIndexerLatency(t, weights, eventCount, QIParentCount[i], randParentCount[i], false, maxDelay, meanDelay, stdDelay, eventInterval, metricParameter, offlineNodes)
+			// elapsed = time.Since(start)
+			// fmt.Println("HighestBefore parent selection, all online. Took ", elapsed)
+		}
+		metricParameter = metricParameter - 1
 	}
-	// 	metricParameter = metricParameter - 0.1
-	// }
 }
 
-func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int, QIParentCount int, randParentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int, metricParameter float64, offlineNodes bool) {
+var mutex sync.Mutex
+
+func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount int, randParentCount int, newQI bool, maxDelay int, meanDelay int, stdDelay int, eventInterval []int, metricParameter float64, offlineNodes bool) {
 	randSrc := rand.New(rand.NewSource(0))       // use a fixed seed of 0 for comparison between runs
 	randParentRNG := rand.New(rand.NewSource(0)) // use a fixed seed of 0 for comparison between runs
 	delayRNG := rand.New(rand.NewSource(0))      // use a fixed seed of 0 for comparison between runs
@@ -197,9 +200,9 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		// standard minimum interval between creating events
 		eventCreationInterval[i] = eventInterval[i]
 		// minimum interval between creating events so that large stake nodes have smaller interval and create more events
-		// eventCreationInterval[i] = int(float64(eventInterval[i]) * float64(sortWeights[len(sortWeights)-1]) / float64(weights[i]))
 
-		// eventCreationInterval[i] = int(80 * float64(sortWeights[0]) / float64(weights[i]))
+		// eventCreationInterval[i] = int(float64(eventInterval[i]) * float64(sortWeights[0]) / float64(weights[i]))
+
 		if eventCreationInterval[i] > longestInterval {
 			longestInterval = eventCreationInterval[i] // longest interval is needed later for checking if the network stalls (no events are produced)
 		}
@@ -228,17 +231,25 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		newEventReceived[i] = *validators.NewCounter()
 	}
 
+	wg := sync.WaitGroup{}
+
 	timeIdx := maxDelay - 1
 	time := -1
 
 	noNewEvents := 0
-	tMax := 10000 // in units of milliseconds; 60 000 = simulation of 1 minute of network activity
+
+	tMax := 50000 // in units of milliseconds; 60 000 = simulation of 1 minute of network activity
 	// now start the simulation
 	for time < tMax {
 		// move forward one timestep
 		timeIdx = (timeIdx + 1) % maxDelay
 		time++
 		noNewEvents++
+		if time%1000 == 0 {
+			// fmt.Println("")
+			// fmt.Print(" TIME: ", time)
+			// fmt.Println("")
+		}
 		if noNewEvents > maxDelay+longestInterval+10 {
 			// fmt.Println("")
 			// fmt.Println("EVENT CREATION STALLED")
@@ -248,196 +259,208 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, eventCount int
 		// Check to see if new events are received by nodes
 		// if they are, do the appropriate updates for the received event
 		for receiveNode := 0; receiveNode < nodeCount; receiveNode++ {
-			// check for events to be received by other nodes (including self)
-			for sendNode := 0; sendNode < nodeCount; sendNode++ {
-				for i := 0; i < len(eventPropagation[timeIdx][sendNode][receiveNode]); i++ {
-					e := eventPropagation[timeIdx][sendNode][receiveNode][i]
-					updatedDAG[receiveNode] = true // with a new received event, DAG progress may have improved enough to allow event emission, set this flag to check
+			wg.Add(1)
+			go func(receiveNode int) {
+				defer wg.Done()
+				// check for events to be received by other nodes (including self)
+				for sendNode := 0; sendNode < nodeCount; sendNode++ {
+					for i := 0; i < len(eventPropagation[timeIdx][sendNode][receiveNode]); i++ {
+						e := eventPropagation[timeIdx][sendNode][receiveNode][i]
+						updatedDAG[receiveNode] = true // with a new received event, DAG progress may have improved enough to allow event emission, set this flag to check
 
-					//add new event to buffer for cheecking if events are ready to put in DAG
-					bufferedEvents[receiveNode] = append(bufferedEvents[receiveNode], e)
-					noNewEvents = 0
+						//add new event to buffer for cheecking if events are ready to put in DAG
+						bufferedEvents[receiveNode] = append(bufferedEvents[receiveNode], e)
+						noNewEvents = 0
+					}
+					//clear the events at this time index
+					mutex.Lock()
+					eventPropagation[timeIdx][sendNode][receiveNode] = eventPropagation[timeIdx][sendNode][receiveNode][:0]
+					mutex.Unlock()
 				}
-				//clear the events at this time index
-				eventPropagation[timeIdx][sendNode][receiveNode] = eventPropagation[timeIdx][sendNode][receiveNode][:0]
-			}
-			// it is required that all of an event's parents have been received before adding to DAG
-			// loop through buffer to check for events that can be processed
-			process := make([]bool, len(bufferedEvents[receiveNode]))
-			for i, buffEvent := range bufferedEvents[receiveNode] {
-				process[i] = true
-				//check if all parents are in the DAG
-				for _, parent := range buffEvent.Parents() {
-					if lchs[receiveNode].DagIndexer.GetEvent(parent) == nil {
-						// a parent is not yet in the DAG, so don't process this event yet
-						process[i] = false
-						break
+				// it is required that all of an event's parents have been received before adding to DAG
+				// loop through buffer to check for events that can be processed
+				process := make([]bool, len(bufferedEvents[receiveNode]))
+				for i, buffEvent := range bufferedEvents[receiveNode] {
+					process[i] = true
+					//check if all parents are in the DAG
+					for _, parent := range buffEvent.Parents() {
+						if lchs[receiveNode].DagIndexer.GetEvent(parent) == nil {
+							// a parent is not yet in the DAG, so don't process this event yet
+							process[i] = false
+							break
+						}
+					}
+					if process[i] {
+						// buffered event has all parents in the DAG and can now be processed
+						frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, &quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode], time)
+						if frame > maxFrame {
+							// quorumIndexers[receiveNode].PrintSubgraphK(buffEvent.Frame()-1, buffEvent.ID())
+							maxFrame = frame
+						}
+
+						// keep a count of nodes that have created events after self's most recent event was created
+						if buffEvent.creationTime > selfParent[receiveNode].creationTime {
+							newEventReceived[receiveNode].Count(buffEvent.Creator())
+						}
 					}
 				}
-				if process[i] {
-					// buffered event has all parents in the DAG and can now be processed
-					frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, &quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode], time)
-					if frame > maxFrame {
-						// quorumIndexers[receiveNode].PrintSubgraphK(buffEvent.Frame()-1, buffEvent.ID())
-						maxFrame = frame
+
+				//remove processed events from buffer
+				temp := make([]*QITestEvent, len(bufferedEvents[receiveNode]))
+				copy(temp, bufferedEvents[receiveNode])
+				bufferedEvents[receiveNode] = bufferedEvents[receiveNode][:0] //clear buffer
+				for i, processed := range process {
+					if processed == false {
+						bufferedEvents[receiveNode] = append(bufferedEvents[receiveNode], temp[i]) // put unprocessed event back in the buffer
 					}
 
-					// keep a count of nodes that have created events after self's most recent event was created
-					if buffEvent.creationTime > selfParent[receiveNode].creationTime {
-						newEventReceived[receiveNode].Count(buffEvent.Creator())
-					}
 				}
-			}
-			//remove processed events from buffer
-			temp := make([]*QITestEvent, len(bufferedEvents[receiveNode]))
-			copy(temp, bufferedEvents[receiveNode])
-			bufferedEvents[receiveNode] = bufferedEvents[receiveNode][:0] //clear buffer
-			for i, processed := range process {
-				if processed == false {
-					bufferedEvents[receiveNode] = append(bufferedEvents[receiveNode], temp[i]) // put unprocessed event back in the buffer
-				}
-
-			}
+			}(receiveNode)
 		}
-
+		wg.Wait()
 		// Build events and check timing condition
 		for self := 0; self < nodeCount; self++ {
-			eventCreationCounter[self]++ // count time since last event created
-			if initialDelay[self] > 0 {
-				// an initial delay in creating the first event at the start of the simulation
-				initialDelay[self]--
-			} else {
-				//self node is ready to try creating a new event
-
-				//create the event datastructure
-				creator := nodes[self]
-				e := &QITestEvent{}
-				e.SetCreator(creator)
-				e.SetParents(hash.Events{}) // first parent is empty hash
-
-				var parents dag.Events
-				if isLeaf[self] { // leaf event
-					e.SetSeq(1)
-					e.SetLamport(1)
-				} else { // normal event
-					e.SetSeq(selfParent[self].Seq() + 1)
-					e.SetLamport(selfParent[self].Lamport() + 1)
-					parents = append(parents, &selfParent[self].BaseEvent) // always use self's previous event as a parent
-				}
-
-				// get heads for parent selection
-				var heads dag.Events
-				for _, head := range headsAll[self] {
-					heads = append(heads, head)
-				}
-				for i := range heads {
-					if selfParent[self].BaseEvent.ID() == heads[i].ID() {
-						// remove the self parent from options, it is already a parent
-						heads[i] = heads[len(heads)-1]
-						heads = heads[:len(heads)-1]
-						break
-					}
-				}
-
-				quorumIndexers[self].SelfParentEvent = selfParent[self].ID() // quorumIndexer needs to know the self's previous event
-
-				if len(heads) < QIParentCount+randParentCount-1 {
-					tooFewHeads = 1 // any parent selection method will give the same result (all available heads), count occurances
+			wg.Add(1)
+			go func(self int) {
+				defer wg.Done()
+				eventCreationCounter[self]++ // count time since last event created
+				if initialDelay[self] > 0 {
+					// an initial delay in creating the first event at the start of the simulation
+					initialDelay[self]--
 				} else {
-					tooFewHeads = 0
-				}
+					//self node is ready to try creating a new event
 
-				if len(heads) >= 1 {
-					// need at least one head to select parents
+					//create the event datastructure
+					selfID := nodes[self]
+					e := &QITestEvent{}
+					e.SetCreator(selfID)
+					e.SetParents(hash.Events{}) // first parent is empty hash
 
-					//iteratively select the best parent from the list of heads
-					for j := 0; j < QIParentCount-1; j++ {
-						var best int
-						if isLeaf[self] {
-							best = randSrc.Intn(len(heads))
-						} else {
-							if newQI {
-								best = quorumIndexers[self].Choose(parents.IDs(), heads.IDs()) //new quorumIndexer
-							} else {
-								best = quorumIndexers[self].SearchStrategy().Choose(parents.IDs(), heads.IDs()) //old quorumIndexer
-							}
-						}
-						parents = append(parents, heads[best])
-						// remove chosen parent from head options
-						heads[best] = heads[len(heads)-1]
-						heads = heads[:len(heads)-1]
-						if len(heads) <= 0 {
+					var parents dag.Events
+					if isLeaf[self] { // leaf event
+						e.SetSeq(1)
+						e.SetLamport(1)
+					} else { // normal event
+						e.SetSeq(selfParent[self].Seq() + 1)
+						e.SetLamport(selfParent[self].Lamport() + 1)
+						parents = append(parents, &selfParent[self].BaseEvent) // always use self's previous event as a parent
+					}
+
+					// get heads for parent selection
+					var heads dag.Events
+					for _, head := range headsAll[self] {
+						heads = append(heads, head)
+					}
+					for i := range heads {
+						if selfParent[self].BaseEvent.ID() == heads[i].ID() {
+							// remove the self parent from options, it is already a parent
+							heads[i] = heads[len(heads)-1]
+							heads = heads[:len(heads)-1]
 							break
 						}
 					}
-					//now select random parents +++TODO make this before or after QI selection?
-					for j := 0; j < randParentCount-1; j++ {
-						if len(heads) <= 0 {
-							break
-						}
-						randParent := randParentRNG.Intn(len(heads))
-						parents = append(parents, heads[randParent])
-						// remove chosen parent from head options
-						heads[randParent] = heads[len(heads)-1]
-						heads = heads[:len(heads)-1]
+
+					quorumIndexers[self].SelfParentEvent = selfParent[self].ID() // quorumIndexer needs to know the self's previous event
+
+					if len(heads) < QIParentCount+randParentCount-1 {
+						tooFewHeads = 1 // any parent selection method will give the same result (all available heads), count occurances
+					} else {
+						tooFewHeads = 0
 					}
 
-				}
-
-				// parent selection is complete, add selected parents to new event
-				for _, parent := range parents {
-					e.AddParent(parent.ID())
-					if e.Lamport() <= parent.Lamport() {
-						e.SetLamport(parent.Lamport() + 1)
-					}
-				}
-
-				// name and ID the event
-				e.SetEpoch(epoch)
-				e.Name = fmt.Sprintf("%03d%04d", self, e.Seq())
-				hasher := sha256.New()
-				hasher.Write(e.Bytes())
-				var id [24]byte
-				copy(id[:], hasher.Sum(nil)[:24])
-				e.SetID(id)
-				hash.SetEventName(e.ID(), fmt.Sprintf("%03d%04d", self, e.Seq()))
-
-				// setup some timing information for event timing
-				e.creationTime = time
-				eTimes[self].nowTime = time
-				eTimes[self].prevTime = selfParent[self].creationTime
-				eTimes[self].minInterval = eventCreationInterval[self]
-				eTimes[self].maxInterval = 2 * eTimes[self].minInterval
-
-				createRandEvent := randEvRNG.Float64() < randEvRate // used for introducing randomly created events
-				if online[creator] == true {
-					// self is online
-					if createRandEvent || isLeaf[self] || readyToEmit(newQI, quorumIndexers[self], *e, busyRate, &eTimes[self], metricParameter, newEventReceived[self], QIParentCount+randParentCount, idx.Validator(nodeCount), online) {
-						//create an event if (i) leaf event, or (ii) event timing condition is met, or (iii) a random event is created
-						isLeaf[self] = false                          // only create one leaf event
-						noNewEvents = 0                               //reset timer counting time interval during which no event has been created
-						tooFewHeadsCtr = tooFewHeadsCtr + tooFewHeads // count events where there were not enough available heads for parent selection
-
-						//now start propagation of event to other nodes
-						delay := 1
-						for receiveNode := 0; receiveNode < nodeCount; receiveNode++ {
-							if receiveNode != self {
-								delay = sampleDist(delayRNG, delayDist) // get a random delay from data distribution
+					if len(heads) >= 1 { // need at least one head to select parents
+						//iteratively select the best parent from the list of heads using QI
+						for j := 0; j < QIParentCount-1; j++ {
+							var best int
+							if isLeaf[self] {
+								// fmt.Print("self ", self, " len ", len(heads))
+								best = randSrc.Intn(len(heads))
 							} else {
-								delay = 1 // no delay to send to self (self will 'recieve' its own event after time increment at the top of the main loop)
+								if newQI {
+									best = quorumIndexers[self].Choose(parents.IDs(), heads.IDs()) //new quorumIndexer
+								} else {
+									best = quorumIndexers[self].SearchStrategy().Choose(parents.IDs(), heads.IDs()) //old quorumIndexer
+								}
 							}
-							receiveTime := (timeIdx + delay) % maxDelay                                                                    // time index for the circular buffer
-							eventPropagation[receiveTime][self][receiveNode] = append(eventPropagation[receiveTime][self][receiveNode], e) // add the event to the buffer
+							parents = append(parents, heads[best])
+							// remove chosen parent from head options
+							heads[best] = heads[len(heads)-1]
+							heads = heads[:len(heads)-1]
+							if len(heads) <= 0 {
+								break
+							}
 						}
+						//now select random parents +++TODO make this before or after QI selection?
+						for j := 0; j < randParentCount-1; j++ {
+							if len(heads) <= 0 {
+								break
+							}
+							randParent := randParentRNG.Intn(len(heads))
+							parents = append(parents, heads[randParent])
+							// remove chosen parent from head options
+							heads[randParent] = heads[len(heads)-1]
+							heads = heads[:len(heads)-1]
+						}
+					}
 
-						eventCreationCounter[self] = 0                    //reset event creation interval counter for this node
-						eventsComplete[self]++                            // increment count of events created for this node
-						selfParent[self] = *e                             //update self parent to be this new event
-						newEventReceived[self] = *validators.NewCounter() // reset count of new events recieved from other node since self's most recent event
+					// parent selection is complete, add selected parents to new event
+					for _, parent := range parents {
+						e.AddParent(parent.ID())
+						if e.Lamport() <= parent.Lamport() {
+							e.SetLamport(parent.Lamport() + 1)
+						}
+					}
+
+					// name and ID the event
+					e.SetEpoch(epoch)
+					e.Name = fmt.Sprintf("%03d%04d", self, e.Seq())
+					hasher := sha256.New()
+					hasher.Write(e.Bytes())
+					var id [24]byte
+					copy(id[:], hasher.Sum(nil)[:24])
+					e.SetID(id)
+					hash.SetEventName(e.ID(), fmt.Sprintf("%03d%04d", self, e.Seq()))
+
+					// setup some timing information for event timing
+					e.creationTime = time
+					eTimes[self].nowTime = time
+					eTimes[self].prevTime = selfParent[self].creationTime
+					eTimes[self].minInterval = eventCreationInterval[self]
+					eTimes[self].maxInterval = 2 * eTimes[self].minInterval
+
+					createRandEvent := randEvRNG.Float64() < randEvRate // used for introducing randomly created events
+					if online[selfID] == true {
+						// self is online
+						if createRandEvent || isLeaf[self] || readyToEmit(newQI, quorumIndexers[self], *e, busyRate, &eTimes[self], metricParameter, newEventReceived[self], QIParentCount+randParentCount, idx.Validator(nodeCount), online) {
+							//create an event if (i) leaf event, or (ii) event timing condition is met, or (iii) a random event is created
+							isLeaf[self] = false                          // only create one leaf event
+							noNewEvents = 0                               //reset timer counting time interval during which no event has been created
+							tooFewHeadsCtr = tooFewHeadsCtr + tooFewHeads // count events where there were not enough available heads for parent selection
+
+							//now start propagation of event to other nodes
+							delay := 1
+							for receiveNode := 0; receiveNode < nodeCount; receiveNode++ {
+								if receiveNode != self {
+									delay = sampleDist(delayRNG, delayDist) // get a random delay from data distribution
+								} else {
+									delay = 1 // no delay to send to self (self will 'recieve' its own event after time increment at the top of the main loop)
+								}
+								receiveTime := (timeIdx + delay) % maxDelay // time index for the circular buffer
+								mutex.Lock()
+								eventPropagation[receiveTime][self][receiveNode] = append(eventPropagation[receiveTime][self][receiveNode], e) // add the event to the buffer
+								mutex.Unlock()
+							}
+
+							eventCreationCounter[self] = 0                    //reset event creation interval counter for this node
+							eventsComplete[self]++                            // increment count of events created for this node
+							selfParent[self] = *e                             //update self parent to be this new event
+							newEventReceived[self] = *validators.NewCounter() // reset count of new events recieved from other node since self's most recent event
+						}
 					}
 				}
-			}
+			}(self)
 		}
+		wg.Wait()
 	}
 	busyRate.Stop()
 	// print some useful output
@@ -591,17 +614,19 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 	if len(e.Parents()) > 1 { // need at aleast one parent other than self
 
 		// ***Logistic Online Growth (requries a reliable estimate of which nodes are online)****
-		if passedTime > times.minInterval {
-			// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
-			kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnline(e.Parents(), nParents, online)
-			if metric {
-				// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
-				// fmt.Println("k: ", kNew, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
-				fmt.Print(",", kNew)
-				// fmt.Print(",", float64(passedTime))
-				return true
-			}
-		}
+		// if passedTime > times.minInterval {
+		// 	// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+		// 	kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnline(e.Parents(), nParents, online)
+		// 	// kNew, metric := quorumIndexer.BernoulliTimingConditionByCountOnline(e.Parents(), nParents, online)
+
+		// 	if metric {
+		// 		// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+		// 		// fmt.Println("k: ", kNew, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+		// 		fmt.Print(",", kNew)
+		// 		// fmt.Print(",", float64(passedTime))
+		// 		return true
+		// 	}
+		// }
 
 		// ***Logistic Quorum Growth****
 		// if passedTime > times.minInterval {
@@ -617,17 +642,17 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 		// }
 
 		// ***Logistic Online Growth and Time****
-		// if passedTime > times.minInterval {
-		// 	// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
-		// 	kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnlineAndTime(float64(passedTime), e.Parents(), nParents, online)
-		// 	if metric {
-		// 		// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
-		// 		// fmt.Println("k: ", kCond, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
-		// 		// fmt.Print(",", float64(passedTime))
-		// 		fmt.Print(",", kNew)
-		// 		return true
-		// 	}
-		// }
+		if passedTime > times.minInterval {
+			// metric := quorumIndexer.ExponentialTimingConditionByCount(e.Parents(), nParents, newEventReceived.Sum())
+			kNew, metric := quorumIndexer.LogisticTimingConditionByCountOnlineAndTime(metricParameter, float64(passedTime), e.Parents(), nParents, online)
+			if metric {
+				// tk := quorumIndexer.LogisticTimingDeltat(e.Parents(), nParents, newEventReceived.Sum())
+				// fmt.Println("k: ", kCond, ", Del t: ", passedTime, ", Now t: ", times.nowTime)
+				// fmt.Print(",", float64(passedTime))
+				fmt.Print(",", kNew)
+				return true
+			}
+		}
 
 		// ***Logistic Growth and Time****
 		// if passedTime > times.minInterval {
@@ -669,17 +694,22 @@ func readyToEmit(newQI bool, quorumIndexer ancestor.QuorumIndexer, e QITestEvent
 		// }
 
 		// // ***go-opera event timing***
-		// parents := e.Parents()
-		// metric := eventMetric(quorumIndexer.GetMetricOfViaParents(parents), e.Seq())
-		// metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric) // +++how does busyRate work?
-		// adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
-		// // fmt.Println(" Timing metric: ", adjustedPassedTime, " Condition: ", times.minInterval)
-		// // if adjustedPassedTime >= times.minInterval {
-		// if adjustedPassedTime >= int(metricParameter) {
-		// 	// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
-		// 	// fmt.Print(",", float64(passedTime))
-		// 	return true
-		// }
+
+		if passedTime > times.minInterval {
+			parents := e.Parents()
+			metric := eventMetric(quorumIndexer.GetMetricOfViaParents(parents), e.Seq())
+			metric = overheadAdjustedEventMetricF(nodeCount, uint64(busyRate.Rate1()*piecefunc.DecimalUnit), metric) // +++how does busyRate work?
+			adjustedPassedTime := passedTime * int(float64(metric)) / DecimalUnit
+			// fmt.Println(" Timing metric: ", adjustedPassedTime, " Condition: ", times.minInterval)
+			// if adjustedPassedTime >= times.minInterval {
+			if adjustedPassedTime >= int(metricParameter) {
+				// quorumIndexer.LogisticTimingCondition3(e.Parents(), nParents)
+				// fmt.Print(",", float64(passedTime))
+				kNew, _ := quorumIndexer.LogisticTimingConditionByCountOnlineAndTime(metricParameter, float64(passedTime), e.Parents(), nParents, online)
+				fmt.Print(",", kNew)
+				return true
+			}
+		}
 
 		// ***RECEIVED STAKE***
 		// fmt.Println(" Timing metric: ", float64(newEventReceived.Sum()), " Condition: ", (metricParameter)*float64(newEventReceived.Quorum))
