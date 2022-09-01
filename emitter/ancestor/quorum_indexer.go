@@ -290,7 +290,10 @@ func (h *QuorumIndexer) GetMetricsOfRootProgress(heads hash.Events, chosenHeads 
 		}
 		heads[len(heads)-1] = maxHeads[i]
 		// rootProgressMetrics[i].NewRootKnowledge = h.EventRootKnowledgeQByCount(maxHeadFrame, h.SelfParentEvent, heads)
-		rootProgressMetrics[i].NewRootKnowledge = h.eventRootKnowledgeQByStake(maxHeadFrame, h.SelfParentEvent, heads)
+		rootProgressMetrics[i].NewRootKnowledge = h.eventRootKnowledgeQByStake(maxHeadFrame, h.SelfParentEvent, heads) //best
+		// rootProgressMetrics[i].NewRootKnowledge = h.eventRootKnowledgeByStake(maxHeadFrame, h.SelfParentEvent, heads)
+		// rootProgressMetrics[i].NewRootKnowledge = h.EventRootKnowledgeByCount(maxHeadFrame, h.SelfParentEvent, heads)
+
 	}
 	return rootProgressMetrics
 }
@@ -592,7 +595,17 @@ func (h *QuorumIndexer) eventRootKnowledgeByCount(frame idx.Frame, event hash.Ev
 
 	return FCroots, kNew
 }
+func (h *QuorumIndexer) EventRootKnowledgeByCount(frame idx.Frame, event hash.Event, chosenHeads hash.Events) float64 {
+	roots := h.lachesis.Store.GetFrameRoots(frame)
 
+	// calculate k for event under consideration
+	kNew := 0.0
+	for _, root := range roots {
+		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(event, root.ID, nil, chosenHeads) //compute for new event
+		kNew += float64(FCProgress[0].NumCounted())
+	}
+	return kNew
+}
 func (h *QuorumIndexer) EventRootKnowledgeByCountOnline(frame idx.Frame, event hash.Event, chosenHeads hash.Events, online map[idx.ValidatorID]bool) float64 {
 	roots := h.lachesis.Store.GetFrameRoots(frame)
 
@@ -713,6 +726,53 @@ func (h *QuorumIndexer) EventRootKnowledgeQByCount(frame idx.Frame, event hash.E
 	return kNew / numRootsForQ // this result should be less than or equal to 1
 }
 
+func (h *QuorumIndexer) eventRootKnowledgeByStake(frame idx.Frame, event hash.Event, chosenHeads hash.Events) float64 {
+	roots := h.lachesis.Store.GetFrameRoots(frame)
+	Q := float64(h.validators.Quorum())
+	D := (Q * Q)
+
+	// calculate k for event under consideration
+
+	RootKnowledge := make([]KIdx, len(roots))
+	for i, root := range roots {
+		rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(event, root.ID, nil, chosenHeads) //compute for new event
+		if FCProgress[0].Sum() <= h.validators.Quorum() {
+			RootKnowledge[i].K = float64(rootStake) * float64(FCProgress[0].Sum())
+			// RootKnowledge[i].K = float64(FCProgress[0].Sum())
+		} else {
+			RootKnowledge[i].K = float64(rootStake) * float64(h.validators.Quorum())
+			// RootKnowledge[i].K = float64(h.validators.Quorum())
+		}
+		RootKnowledge[i].Root = root
+
+	}
+
+	sort.Sort(sortedKIdx(RootKnowledge))
+	var kNew float64 = 0
+
+	var bestRootsStake pos.Weight = 0
+	for _, kidx := range RootKnowledge {
+		rootValidatorIdx := h.validators.GetIdx(kidx.Root.Slot.Validator)
+		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+		if bestRootsStake >= h.validators.Quorum() {
+			break
+		} else if bestRootsStake+rootStake <= h.validators.Quorum() {
+			// kNew += float64(kidx.K) * float64(rootStake)
+			kNew += float64(kidx.K)
+			bestRootsStake += rootStake
+		} else {
+			partialStake := h.validators.Quorum() - bestRootsStake
+			kNew += float64(kidx.K) * float64(partialStake) / float64(rootStake)
+			bestRootsStake = h.validators.Quorum() // this will trigger the break condition above
+		}
+	}
+	kNew = kNew / D
+
+	return kNew
+}
+
 func (h *QuorumIndexer) eventRootKnowledgeQByStake(frame idx.Frame, event hash.Event, chosenHeads hash.Events) float64 {
 	roots := h.lachesis.Store.GetFrameRoots(frame)
 	Q := float64(h.validators.Quorum())
@@ -792,7 +852,229 @@ func (h *QuorumIndexer) LogisticTimingDeltat(chosenHeads hash.Events, nParents i
 	return Deltat
 }
 
+func (h *QuorumIndexer) RootFindNewtonsMethodOnlineNodes(nParents int, online map[idx.ValidatorID]bool) float64 {
+	// n := 0.0
+	// onlineWeight := 0.0
+	// minWeight := float64(h.validators.TotalWeight())
+	// weights := make([]float64, 0)
+	// for ID, isOnline := range online {
+	// 	if isOnline {
+	// 		idx := h.validators.GetIdx(ID)
+	// 		weight := float64(h.validators.GetWeightByIdx(idx))
+	// 		onlineWeight += weight
+	// 		weights = append(weights, weight)
+	// 		if weight < minWeight {
+	// 			minWeight = weight
+	// 		}
+	// 		n++
+	// 	}
+	// }
+
+	// quorumStake := h.validators.NewCounter()
+	weights := h.validators.SortedWeights()
+	sortedID := h.validators.SortedIDs()
+	// for i, weight := range sortedWeights {
+	// 	// if quorumStake.HasQuorum() {
+	// 	// 	break
+	// 	// }
+	// 	if online[sortedID[i]] {
+	// 		onlineWeight += float64(weight)
+	// 		// quorumStake.Count(sortedID[i])
+	// 		weights = append(weights, float64(weight))
+	// 		if float64(weight) < minWeight {
+	// 			minWeight = float64(weight)
+	// 		}
+	// 		n++
+	// 	}
+	// }
+	l := h.validators.Len() / 2
+	//++++TODO fix initial value
+	root := h.fT(float64(weights[l]), sortedID[l], online)
+	// root := 1.0
+	for {
+		f := 0.0
+		df := 0.0
+		sum := 0.0
+		for i, weight := range weights {
+			if online[sortedID[i]] {
+				temp := (1.0 / h.fT(float64(weight), sortedID[i], online)) * math.Pow(float64(nParents), h.fT(float64(weight), sortedID[i], online)/root)
+				f += temp
+				df += -temp * math.Log(float64(nParents)) * h.fT(float64(weight), sortedID[i], online) / math.Pow(root, 2)
+				sum += (1.0 / h.fT(float64(weight), sortedID[i], online))
+			}
+		}
+		f -= sum * float64(nParents)
+		root = root - f/df
+		if math.Abs(f) < 1.0 {
+			break
+		}
+	}
+
+	// root := math.Sqrt(onlineWeight / n)
+	// for {
+	// 	f := 0.0
+	// 	df := 0.0
+	// 	for _, weight := range weights {
+	// 		temp := weight * math.Pow(float64(nParents), root/math.Sqrt(weight))
+	// 		f += temp
+	// 		df += temp * math.Log(float64(nParents)) / math.Sqrt(weight)
+	// 	}
+	// 	f -= onlineWeight * float64(nParents)
+	// 	root = root - f/df
+	// 	if math.Abs(f) < minWeight/10000.0 {
+	// 		break
+	// 	}
+	// }
+
+	// root := math.Log10(onlineWeight / n)
+	// for {
+	// 	f := 0.0
+	// 	df := 0.0
+	// 	for _, weight := range weights {
+	// 		temp := weight * math.Pow(float64(nParents), root/math.Log10(weight+1))
+	// 		f += temp
+	// 		df += temp * math.Log(float64(nParents)) / math.Log10(weight+1)
+	// 	}
+	// 	f -= onlineWeight * float64(nParents)
+	// 	root = root - f/df
+	// 	if math.Abs(f) < minWeight/10000.0 {
+	// 		break
+	// 	}
+	// }
+	return root
+}
+func (h *QuorumIndexer) fT(val float64, ID idx.ValidatorID, online map[idx.ValidatorID]bool) float64 {
+	// val = math.Log10(val)
+	// val = math.Sqrt(val)
+	// dval := 0.5 * math.Pow(f, -0.5)
+	// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	sortedWeights := h.validators.SortedWeights()
+	sortedID := h.validators.SortedIDs()
+	cumSum := 0.0
+	n := 0.0
+	for i := len(sortedID) - 1; i >= 0; i-- {
+
+		if online[sortedID[i]] {
+			cumSum += float64(sortedWeights[i])
+			n++
+			if float64(sortedWeights[i]) > val {
+				break
+			}
+			// if sortedID[i] == ID {
+			// 	break
+			// }
+		}
+	}
+	// return cumSum
+	return n
+
+	// return 2*val*float64(h.validators.TotalWeight()) - val*val
+	// return val
+}
+
+func (h *QuorumIndexer) BernoulliTimingConditionByCountOnline(chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
+
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	n := 0.0
+	// onlineWeight := .0
+	for _, isOnline := range online {
+		if isOnline {
+			// 		idx := h.validators.GetIdx(ID)
+			// 		weight := float64(h.validators.GetWeightByIdx(idx))
+			// 		// pEff += math.Pow(float64(nParents), f(weight)/f(float64(selfWeight)))
+			// 		// pEff += weight * math.Pow(float64(nParents), fT(weight)/alpha)
+			// 		pEff += math.Pow(float64(nParents), h.fT(weight)/alpha)
+			// 		// pEff += math.Pow(float64(nParents), weight/meanWeight)
+			// 		onlineWeight += weight
+			n++
+		}
+	}
+
+	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
+	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for most recent self event
+	kCond := 0.0
+	p := float64(nParents)
+	tau := 1.0 / math.Log(p)
+	if kPrev == 0 {
+	} else {
+		a := 1.0 - n*n
+		tPrev := 2 * tau * math.Log(a*kPrev/(kPrev-1.0))
+		tPrev = math.Sqrt(tPrev)
+		tCond := tPrev + 1.0
+		e := math.Exp(tCond * tCond / (2 * tau))
+
+		kCond = e / (e - a)
+	}
+
+	if kNew >= kCond {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
+}
+
 func (h *QuorumIndexer) LogisticTimingConditionByCountOnline(chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
+
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	n := 0.0
+	// onlineWeight := .0
+	for _, isOnline := range online {
+		if isOnline {
+
+			n++
+		}
+	}
+
+	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
+	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for most recent self event
+	kCond := 0.0
+	if kPrev == 0 {
+		kParent := 1.0
+		for _, parent := range chosenHeads {
+
+			if h.Dagi.GetEvent(parent).Frame() == frame {
+				k := h.EventRootKnowledgeByCountOnline(frame-1, parent, nil, online)
+				if k < kParent {
+					kParent = k
+				}
+			}
+		}
+		// +++TODO, go back to frame of prev, in case of skipped frames
+		kPrev = h.EventRootKnowledgeByCountOnline(frame-1, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+		tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		tMax := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kParent-1.0)
+		kMin := 1 / (n * n)
+		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+		tCond := tMin - (tMax - tPrev) + 1.0
+		kCond = 1.0 / (1.0 + math.Exp(-tCond*math.Log(float64(nParents))))
+	} else {
+		p := float64(nParents)
+		kCond = p * kPrev / (p*kPrev + 1.0 - kPrev)
+	}
+
+	if kNew >= kCond {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
+}
+func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineOLD(chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
 
 	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
@@ -820,22 +1102,87 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnline(chosenHeads hash.Ev
 	meanInvWeight := 0.0 //+++TODO do this for online nodes only?
 	meanWeight := 0.0
 	var maxWeight pos.Weight = 0
+	var minWeight pos.Weight = h.validators.TotalWeight()
 	for _, idx := range h.validators.Idxs() {
 		meanInvWeight += 1 / float64(h.validators.GetWeightByIdx(idx))
 		meanWeight += float64(h.validators.GetWeightByIdx(idx))
 		if h.validators.GetWeightByIdx(idx) > maxWeight {
 			maxWeight = h.validators.GetWeightByIdx(idx)
 		}
+		if h.validators.GetWeightByIdx(idx) < minWeight {
+			minWeight = h.validators.GetWeightByIdx(idx)
+		}
 	}
 	meanWeight = meanWeight / float64(h.validators.Len())
 	meanInvWeight = meanInvWeight / float64(h.validators.Len())
 
-	selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
-	selfIdx := h.validators.GetIdx(selfID)
-	selfWeight := h.validators.GetWeightByIdx(selfIdx)
-	// dt := 1.0 * (1 / meanInvWeight) * (1 / float64(selfWeight))
-	dt := 1.0 * meanWeight * (1 / float64(selfWeight))
-	kCond = math.Pow(float64(nParents), dt) * kPrev / (math.Pow(float64(nParents), dt)*kPrev - kPrev + 1.0) // This condition is based on logistic growth
+	// onlineWeight := .0
+	// for ID, isOnline := range online {
+	// 	if isOnline {
+	// 		idx := h.validators.GetIdx(ID)
+	// 		weight := float64(h.validators.GetWeightByIdx(idx))
+	// 		onlineWeight += weight
+	// 	}
+	// }
+
+	// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	// selfIdx := h.validators.GetIdx(selfID)
+	// selfWeight := h.validators.GetWeightByIdx(selfIdx)
+
+	// quorumStake := h.validators.NewCounter()
+	// sortedWeights := h.validators.SortedWeights()
+	// sortedID := h.validators.SortedIDs()
+	// isQ := false
+	// for i, _ := range sortedWeights {
+	// 	if quorumStake.HasQuorum() {
+	// 		break
+	// 	}
+	// 	if online[sortedID[i]] {
+	// 		quorumStake.Count(sortedID[i])
+	// 		if sortedID[i] == selfID {
+	// 			isQ = true
+	// 		}
+	// 	}
+	// }
+
+	// dt := 1.0
+	// dt := 1.0 * meanWeight * (1 / float64(selfWeight))
+	// dt := 1.0 * float64(maxWeight) * (1 / float64(selfWeight))
+
+	// alpha2++
+	// alpha := 1000.0 * float64(minWeight)
+	// dt := alpha / float64(selfWeight)
+	// if isQ {
+	// 	dt = 1.0
+	// }
+
+	// pEff := 0.0
+	n := 0.0
+	// onlineWeight := .0
+	for _, isOnline := range online {
+		if isOnline {
+			// 		idx := h.validators.GetIdx(ID)
+			// 		weight := float64(h.validators.GetWeightByIdx(idx))
+			// 		// pEff += math.Pow(float64(nParents), f(weight)/f(float64(selfWeight)))
+			// 		// pEff += weight * math.Pow(float64(nParents), fT(weight)/alpha)
+			// 		pEff += math.Pow(float64(nParents), h.fT(weight)/alpha)
+			// 		// pEff += math.Pow(float64(nParents), weight/meanWeight)
+			// 		onlineWeight += weight
+			n++
+		}
+	}
+	// pEff = pEff / n
+	pEff := float64(nParents)
+	// pEff = pEff / onlineWeight
+	// pEff := float64(nParents)
+	// alpha := h.RootFindNewtonsMethodOnlineNodes(nParents, online)
+	// dt := 1.0 / (h.fT(float64(selfWeight), selfID, online) / alpha)
+	dt := 1.0
+	// dt := float64(selfWeight) / alpha
+	// kCond = kPrev / (kPrev + math.Pow(float64(nParents), -dt)*(1.0-kPrev)) // This condition is based on logistic growth
+	kCond = kPrev / (kPrev + math.Pow(pEff, -dt)*(1.0-kPrev)) // This condition is based on logistic growth
+	// kCond = math.Trunc(kCond/(1.0/(n*n))) / (n * n)
+	// kCond = kPrev / (kPrev + (1.0-kPrev)/pEff) // This condition is based on logistic growth
 	// }
 
 	if kNew >= kCond {
@@ -903,8 +1250,46 @@ func timingMedianMean(expMovs map[idx.ValidatorID]ExpMov) float64 {
 
 	return median
 }
-
 func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents int) Metric {
+	// this function returns t_k, the logistic time difference between the current event being considered and the previous self event
+	// t_k can be thought of as time difference in units of `DAG progress time'
+
+	framePrev := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+	frameNew := framePrev
+	// find if a head's frame is ahead of prev self event's frame
+	for _, head := range chosenHeads {
+		frameNew = maxFrame(frameNew, h.Dagi.GetEvent(head).Frame())
+	}
+
+	kNew := h.EventRootKnowledgeQByCount(frameNew, h.SelfParentEvent, chosenHeads) // calculate k for new event under consideration
+	tMax := 2 * math.Log(float64(h.validators.Quorum())) / math.Log(float64(nParents))
+	tNew := 0.0
+	if kNew < 1.0 {
+		tNew = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
+	} else {
+		tNew = tMax
+	}
+
+	kPrev := h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
+
+	tPrev := 0.0
+	delt_k := 0.0
+	if framePrev == frameNew {
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	} else {
+		kMin := 1.0 / (float64(h.validators.Quorum()) * float64(h.validators.Quorum()))
+		tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+		kPrev = h.EventRootKnowledgeQByCount(framePrev, h.SelfParentEvent, nil) // calculate k for most recent self event
+		tPrev = -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+		diffFrames := frameNew - framePrev // number of frames prev is behind new
+		tFrame := tMax - tMin              // duration of an entire frame
+		tPrev = tPrev - tFrame*float64(diffFrames)
+	}
+	delt_k = tNew - tPrev
+
+	return Metric(delt_k * piecefunc.DecimalUnit)
+}
+func (h *QuorumIndexer) GetMetricOfLogisticOLD(chosenHeads hash.Events, nParents int) Metric {
 	// this function returns t_k, the logistic time difference between the current event being considered and the previous self event
 	// t_k can be thought of as time difference in units of `DAG progress time'
 
@@ -943,7 +1328,98 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	return Metric(delt_k * piecefunc.DecimalUnit)
 }
 
-func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
+func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropConst float64, passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
+	prevFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+	newFrame := prevFrame
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		newFrame = maxFrame(newFrame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	n := 0.0
+	meanOnlineWeight := 0.0
+	maxOnlineWeight := 0.0
+	for ID, isOnline := range online {
+		if isOnline {
+			idx := h.validators.GetIdx(ID)
+			weight := float64(h.validators.GetWeightByIdx(idx))
+			meanOnlineWeight += weight
+			if weight > maxOnlineWeight {
+				maxOnlineWeight = weight
+			}
+			n++
+		}
+	}
+	meanOnlineWeight = meanOnlineWeight / n
+
+	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
+	kNew := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online)       // calculate k for most recent self event
+	kMin := 1.0 / (n * n)
+	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
+	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
+	tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+
+	delt_k := 0.0
+	if prevFrame < newFrame {
+		delt_k = tNew - tMin
+		// Calculate remaining DAG time for previous event to complete its frame
+		roots := h.lachesis.Store.GetFrameRoots(prevFrame + 1)
+		kRootMin := 1.0
+		for _, root := range roots {
+			kRoot := h.EventRootKnowledgeByCountOnline(prevFrame, root.ID, nil, online)
+			if kRoot < kRootMin {
+				kRootMin = kRoot
+			}
+		}
+		tRoot := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kRootMin-1.0)
+		if tRoot > tPrev {
+			delt_k += tRoot - tPrev
+		}
+
+		//if previous is more than one frame behind, calulate DAG time duration of those intervening frames
+
+		for frame := prevFrame + 2; frame < newFrame; frame++ {
+			kRootMin = 1.0
+			roots := h.lachesis.Store.GetFrameRoots(frame)
+			for _, root := range roots {
+				kRoot := h.EventRootKnowledgeByCountOnline(frame, root.ID, nil, online)
+				if kRoot < kRootMin {
+					kRootMin = kRoot
+				}
+			}
+			tRoot := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kRootMin-1.0)
+			delt_k += tRoot - tMin
+		}
+	} else {
+		delt_k = tNew - tPrev
+
+	}
+	// *** VARIABLE TIME INTERVAL***
+	// medianT := timingMedianMean(h.TimingStats)
+	// timePropConst := 1.0 / medianT
+	// timePropConst := 1 / 250.0
+	deltRealTime := passedTime / timePropConst
+	meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
+
+	// ***  STAKE DEPENDENT TIME INTERVAL***
+	// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	// selfIdx := h.validators.GetIdx(selfID)
+	// selfWeight := h.validators.GetWeightByIdx(selfIdx)
+	// deltaStakeTime := float64(selfWeight) / meanOnlineWeight
+
+	// meanDelt := math.Cbrt(delt_k * deltRealTime * deltaStakeTime) //geometric mean
+
+	dt := 1.0
+	if meanDelt >= dt {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
+}
+func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTimeOLD(passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
 
 	// *** UNIFORM TIME INTERVAL***
 	timePropConst := 1 / 90.0
