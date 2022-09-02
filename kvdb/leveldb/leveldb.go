@@ -88,7 +88,7 @@ var adjustCache = piecefunc.NewFunc([]piecefunc.Dot{
 })
 
 func _aligned64kb(v int) int {
-	base := 128 * opt.KiB
+	base := 256 * opt.KiB
 	if v < base {
 		return v
 	}
@@ -97,8 +97,8 @@ func _aligned64kb(v int) int {
 
 func aligned64kb(v int) int {
 	v = _aligned64kb(v)
-	if v%256*opt.KiB == 0 {
-		return v + 128*opt.KiB
+	if v%512*opt.KiB == 0 {
+		return v + 256*opt.KiB
 	}
 	return v
 }
@@ -118,8 +118,6 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 		WriteBuffer:            aligned64kb(cache / 4), // Two of these are used internally
 		Filter:                 filter.NewBloomFilter(10),
 	})
-	println("==+== cache1", aligned64kb(cache/2))
-	println("==+== cache2", aligned64kb(cache/4))
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
 		db, err = leveldb.RecoverFile(path, nil)
 	}
