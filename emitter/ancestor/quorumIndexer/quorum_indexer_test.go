@@ -232,20 +232,20 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 	wg := sync.WaitGroup{}
 
 	timeIdx := maxDelay - 1
-	time := -1
+	timeIdxAbs := -1
 
 	noNewEvents := 0
 
 	tMax := 50000 // in units of milliseconds; 60 000 = simulation of 1 minute of network activity
 	// now start the simulation
-	for time < tMax {
+	for timeIdxAbs < tMax {
 		// move forward one timestep
 		timeIdx = (timeIdx + 1) % maxDelay
-		time++
+		timeIdxAbs++
 		noNewEvents++
-		if time%1000 == 0 {
+		if timeIdxAbs%1000 == 0 {
 			// fmt.Println("")
-			fmt.Print(" TIME: ", time)
+			fmt.Print(" TIME: ", timeIdxAbs)
 			// fmt.Println("")
 		}
 		if noNewEvents > maxDelay+longestInterval+10 {
@@ -278,19 +278,19 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 				// it is required that all of an event's parents have been received before adding to DAG
 				// loop through buffer to check for events that can be processed
 				process := make([]bool, len(bufferedEvents[receiveNode]))
-				for i, buffEvent := range bufferedEvents[receiveNode] {
-					process[i] = true
+				for node, buffEvent := range bufferedEvents[receiveNode] {
+					process[node] = true
 					//check if all parents are in the DAG
 					for _, parent := range buffEvent.Parents() {
 						if lchs[receiveNode].DagIndexer.GetEvent(parent) == nil {
 							// a parent is not yet in the DAG, so don't process this event yet
-							process[i] = false
+							process[node] = false
 							break
 						}
 					}
-					if process[i] {
+					if process[node] {
 						// buffered event has all parents in the DAG and can now be processed
-						frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, &quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode], time)
+						frame := processEvent(inputs[receiveNode], &lchs[receiveNode], buffEvent, &quorumIndexers[receiveNode], newQI, &headsAll[receiveNode], nodes[receiveNode], timeIdxAbs)
 						if frame > maxFrame {
 							// quorumIndexers[receiveNode].PrintSubgraphK(buffEvent.Frame()-1, buffEvent.ID())
 							maxFrame = frame
@@ -420,8 +420,8 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 					hash.SetEventName(e.ID(), fmt.Sprintf("%03d%04d", self, e.Seq()))
 
 					// setup some timing information for event timing
-					e.creationTime = time
-					eTimes[self].nowTime = time
+					e.creationTime = timeIdxAbs
+					eTimes[self].nowTime = timeIdxAbs
 					eTimes[self].prevTime = selfParent[self].creationTime
 					eTimes[self].minInterval = eventCreationInterval[self]
 					eTimes[self].maxInterval = 2 * eTimes[self].minInterval
@@ -476,8 +476,8 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 		fmt.Println("Stake: ", weights[i], "events: ", nEv, " events/stake: ", float64(nEv)/float64(weights[i]))
 	}
 	fmt.Println("Max Frame: ", maxFrame)
-	fmt.Println("Time ", float64(time)/1000.0, " seconds")
-	fmt.Println("Frames per second: ", (1000.0*float64(maxFrame))/float64(time))
+	fmt.Println("Time ", float64(timeIdxAbs)/1000.0, " seconds")
+	fmt.Println("Frames per second: ", (1000.0*float64(maxFrame))/float64(timeIdxAbs))
 	fmt.Println("Number of Events: ", totalEventsComplete)
 
 	numOnlineNodes := 0
@@ -486,7 +486,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 			numOnlineNodes++
 		}
 	}
-	fmt.Println("Event rate per (online) node: ", float64(totalEventsComplete)/float64(numOnlineNodes)/(float64(time)/1000.0))
+	fmt.Println("Event rate per (online) node: ", float64(totalEventsComplete)/float64(numOnlineNodes)/(float64(timeIdxAbs)/1000.0))
 	fmt.Println("Average frames per event per (online) node: ", (float64(maxFrame))/(float64(totalEventsComplete)/float64(numOnlineNodes)))
 
 	fmt.Println("Number of nodes: ", nodeCount)
