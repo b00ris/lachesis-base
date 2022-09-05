@@ -11,6 +11,7 @@ import (
 
 	"github.com/Fantom-foundation/go-opera/utils/piecefunc"
 	"github.com/Fantom-foundation/go-opera/utils/rate"
+
 	"github.com/Fantom-foundation/lachesis-base/abft"
 	"github.com/Fantom-foundation/lachesis-base/emitter/ancestor"
 	"github.com/Fantom-foundation/lachesis-base/hash"
@@ -126,16 +127,13 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 
 	eTimes := make([]emissionTimes, nodeCount)
 
-	// create a 3D slice with coordinates [time][node][node] that is used to store delayed transmission of events between nodes
+	// create a 2D slice with coordinates [time][node] that is used to store delayed transmission of events between nodes
 	//each time coordinate corresponds to 1 millisecond of delay between a pair of nodes
-	eventPropagation := make([][][][]*QITestEvent, maxDelay)
-	for i := range eventPropagation {
-		eventPropagation[i] = make([][][]*QITestEvent, nodeCount)
-		for j := range eventPropagation[i] {
-			eventPropagation[i][j] = make([][]*QITestEvent, nodeCount)
-			for k := range eventPropagation[i][j] {
-				eventPropagation[i][j][k] = make([]*QITestEvent, 0)
-			}
+	eventPropagation := make([][][]*QITestEvent, maxDelay)
+	for t := range eventPropagation {
+		eventPropagation[t] = make([][]*QITestEvent, nodeCount)
+		for node := range eventPropagation[t] {
+			eventPropagation[t][node] = make([]*QITestEvent, 0)
 		}
 	}
 
@@ -263,9 +261,9 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 			go func(receiveNode int) {
 				defer wg.Done()
 				// check for events to be received by other nodes (including self)
-				for sendNode := 0; sendNode < nodeCount; sendNode++ {
-					for i := 0; i < len(eventPropagation[timeIdx][sendNode][receiveNode]); i++ {
-						e := eventPropagation[timeIdx][sendNode][receiveNode][i]
+				{
+					for i := 0; i < len(eventPropagation[timeIdx][receiveNode]); i++ {
+						e := eventPropagation[timeIdx][receiveNode][i]
 						updatedDAG[receiveNode] = true // with a new received event, DAG progress may have improved enough to allow event emission, set this flag to check
 
 						//add new event to buffer for cheecking if events are ready to put in DAG
@@ -274,7 +272,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 					}
 					//clear the events at this time index
 					mutex.Lock()
-					eventPropagation[timeIdx][sendNode][receiveNode] = eventPropagation[timeIdx][sendNode][receiveNode][:0]
+					eventPropagation[timeIdx][receiveNode] = eventPropagation[timeIdx][receiveNode][:0]
 					mutex.Unlock()
 				}
 				// it is required that all of an event's parents have been received before adding to DAG
@@ -447,7 +445,7 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 								}
 								receiveTime := (timeIdx + delay) % maxDelay // time index for the circular buffer
 								mutex.Lock()
-								eventPropagation[receiveTime][self][receiveNode] = append(eventPropagation[receiveTime][self][receiveNode], e) // add the event to the buffer
+								eventPropagation[receiveTime][receiveNode] = append(eventPropagation[receiveTime][receiveNode], e) // add the event to the buffer
 								mutex.Unlock()
 							}
 
