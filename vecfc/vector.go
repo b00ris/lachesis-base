@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"math"
 
+	"github.com/Fantom-foundation/lachesis-base/hash"
+	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 )
 
@@ -62,6 +64,10 @@ func (b *LowestAfterSeq) Set(i idx.Validator, seq idx.Event) {
 // Size of the vector clock
 func (b HighestBeforeSeq) Size() int {
 	return len(b) / 8
+}
+
+func (b HighestBeforeSeq) GetEvent(h hash.Event) dag.Event {
+	return b.GetEvent(h)
 }
 
 // Get i's position in the byte-encoded vector clock
