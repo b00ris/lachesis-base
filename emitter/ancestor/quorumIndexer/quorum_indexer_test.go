@@ -318,6 +318,9 @@ func testQuorumIndexerLatency(t *testing.T, weights []pos.Weight, QIParentCount 
 		wg.Wait()
 		// Build events and check timing condition
 		for self := 0; self < nodeCount; self++ {
+			if timeIdxAbs%11 != (self % 11) {
+				continue
+			}
 			wg.Add(1)
 			go func(self int) {
 				defer wg.Done()
