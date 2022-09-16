@@ -646,7 +646,15 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnline(chosenHeads hash.Ev
 
 	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
 	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
-	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for most recent self event
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)
+	// kPrev := 0.0
+	// for _, head := range chosenHeads {
+	// 	kHead := h.EventRootKnowledgeByCountOnline(frame, head, nil, online) // calculate k for most recent self event
+	// 	if kHead > kPrev {
+	// 		kPrev = kHead
+	// 	}
+
+	// }
 	kCond := 0.0
 	if kPrev == 0 {
 		kParent := 1.0
@@ -760,10 +768,7 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
 	kMin := 1.0 / (n * n)
 	kNew := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
-	if kNew == 1.0 {
-		// k = 1.0 occurs at infinity in the sigmoid
-		kNew -= kMin
-	}
+	// +++TODO confirm no problem when kNew=1 so tNew =infinity
 	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
 
 	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
@@ -808,6 +813,26 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	return Metric(delt_k * piecefunc.DecimalUnit)
 }
 
+func (h *QuorumIndexer) PiecewiseLinearCondition(chosenHeads hash.Events, online map[idx.ValidatorID]bool) (float64, float64) {
+	newFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		newFrame = maxFrame(newFrame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	kNew := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	kWorld := 0.0
+	for _, head := range chosenHeads {
+		k := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online) // calculate k for most recent self Event
+		if k > kWorld {
+			kWorld = k
+		}
+	}
+	// kPrev := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+	return kNew, kWorld
+}
+
 func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropConst float64, passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
 	prevFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 	newFrame := prevFrame
@@ -827,11 +852,21 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
 	kMin := 1.0 / (n * n)
 	kNew := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
-	if kNew == 1.0 {
-		// k = 1.0 occurs at infinity in the sigmoid
-		kNew -= kMin
-	}
+	// if kNew == 1.0 {
+	// k = 1.0 occurs at infinity in the sigmoid
+	// 	kNew -= kMin
+	// }
 	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+	// kPrev := 0.0
+	// for _, head := range chosenHeads {
+	// 	kHead := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
+	// 	// kPrev += kHead
+	// 	if kHead > kPrev {
+	// 		kPrev = kHead
+	// 	}
+	// }
+	// prevFrame = newFrame
+	// kPrev = kPrev / float64(len(chosenHeads))
 
 	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
 	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
