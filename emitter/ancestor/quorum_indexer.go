@@ -813,6 +813,153 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	return Metric(delt_k * piecefunc.DecimalUnit)
 }
 
+func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+	// find max frame of all heads
+	var frame idx.Frame
+	// for _, head := range allHeads {
+	// 	frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	// }
+
+	frame = h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	//find the highest event for each validator
+	candidateEvents := make(map[idx.ValidatorID][]hash.Event)
+	for _, head := range allHeads {
+		stakeCtr := h.validators.NewCounter()
+		var parents hash.Events
+		parents.Add(head)
+		for len(parents) > 0 {
+			hE := parents[len(parents)-1]
+			e := h.Dagi.GetEvent(hE)
+			c := e.Creator()
+			stakeCtr.Count(c)
+			candidateEvents[c] = append(candidateEvents[c], hE)
+			parents = parents[:len(parents)-1]
+			for _, p := range e.Parents() {
+				if h.Dagi.GetEvent(p).Frame() >= frame {
+					parents.Add(p)
+				}
+			}
+
+			if stakeCtr.Sum() >= h.validators.TotalWeight() {
+				// we have found an event for each validator under this head
+				break
+			}
+		}
+	}
+
+	// from the list of events, get the highest known event for each validator
+	highestEvents := make(map[idx.ValidatorID]hash.Event)
+	for validator, events := range candidateEvents {
+		var maxSeq idx.Event
+		maxSeq = 0
+		for _, e := range events {
+			seq := h.Dagi.GetEvent(e).Seq()
+			if seq > maxSeq {
+				highestEvents[validator] = e
+				maxSeq = seq
+			}
+		}
+	}
+	kGreaterCount := 0.0
+	kGreaterStake := h.validators.NewCounter()
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online) // calculate k for new event under consideration
+	for _, e := range highestEvents {
+		k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online) // calculate k for most recent self Event
+		if k >= kPrev {
+			kGreaterCount++
+			de := h.Dagi.GetEvent(e)
+			kGreaterStake.Count(de.Creator())
+		}
+	}
+	// thresholdStake := threshParam * float64(h.validators.TotalWeight())
+	// stake := float64(kGreaterStake.Sum())
+	// thresholdCount := 0.1 * float64(h.validators.Len())
+
+	// *** VARIABLE TIME INTERVAL***
+	// medianT := timingMedianMean(h.TimingStats)
+	// timePropConst = medianT
+	// deltRealTime := passedTime / timePropConst
+	n := float64(h.validators.Len())
+	if kGreaterCount/n*passedTime > threshParam {
+		return true
+	}
+	return false
+}
+
+func (h *QuorumIndexer) ValidatorComparison(allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+	// find max frame of all heads
+	var frame idx.Frame
+	// for _, head := range allHeads {
+	// 	frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	// }
+
+	frame = h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	//find the highest event for each validator
+	candidateEvents := make(map[idx.ValidatorID][]hash.Event)
+	for _, head := range allHeads {
+		stakeCtr := h.validators.NewCounter()
+		var parents hash.Events
+		parents.Add(head)
+		for len(parents) > 0 {
+			hE := parents[len(parents)-1]
+			e := h.Dagi.GetEvent(hE)
+			c := e.Creator()
+			stakeCtr.Count(c)
+			candidateEvents[c] = append(candidateEvents[c], hE)
+			parents = parents[:len(parents)-1]
+			for _, p := range e.Parents() {
+				if h.Dagi.GetEvent(p).Frame() >= frame {
+					parents.Add(p)
+				}
+			}
+
+			if stakeCtr.Sum() >= h.validators.TotalWeight() {
+				// we have found an event for each validator under this head
+				break
+			}
+		}
+	}
+
+	// from the list of events, get the highest known event for each validator
+	highestEvents := make(map[idx.ValidatorID]hash.Event)
+	for validator, events := range candidateEvents {
+		var maxSeq idx.Event
+		maxSeq = 0
+		for _, e := range events {
+			seq := h.Dagi.GetEvent(e).Seq()
+			if seq > maxSeq {
+				highestEvents[validator] = e
+				maxSeq = seq
+			}
+		}
+	}
+	kGreaterCount := 0.0
+	kGreaterStake := h.validators.NewCounter()
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online) // calculate k for new event under consideration
+	for _, e := range highestEvents {
+		k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online) // calculate k for most recent self Event
+		if k >= kPrev {
+			kGreaterCount++
+			de := h.Dagi.GetEvent(e)
+			kGreaterStake.Count(de.Creator())
+		}
+	}
+	// thresholdStake := threshParam * float64(h.validators.TotalWeight())
+	// stake := float64(kGreaterStake.Sum())
+	// thresholdCount := threshParam * float64(h.validators.Len())
+
+	// if stake >= thresholdStake {
+	// 	return true
+	// }
+	if kGreaterCount >= 4 {
+		return true
+	}
+	// }
+	return false
+}
+
 func (h *QuorumIndexer) PiecewiseLinearCondition(chosenHeads hash.Events, online map[idx.ValidatorID]bool) (float64, float64) {
 	newFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
@@ -831,6 +978,99 @@ func (h *QuorumIndexer) PiecewiseLinearCondition(chosenHeads hash.Events, online
 	}
 	// kPrev := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
 	return kNew, kWorld
+}
+
+func (h *QuorumIndexer) LogisticTimeComparison(timePropConst float64, passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
+	prevFrame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+	newFrame := prevFrame
+
+	// find max frame when parents are selected
+	for _, head := range chosenHeads {
+		newFrame = maxFrame(newFrame, h.Dagi.GetEvent(head).Frame())
+	}
+
+	n := 0.0
+	for _, isOnline := range online {
+		if isOnline {
+			n++
+		}
+	}
+
+	// +++TODO there is an assumption that online nodes for prev are the same for new and this may not be correct, use cached value?
+	kMin := 1.0 / (n * n)
+	kNew := h.EventRootKnowledgeByCountOnline(newFrame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	// if kNew == 1.0 {
+	// k = 1.0 occurs at infinity in the sigmoid
+	// 	kNew -= kMin
+	// }
+	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+	kHead := 0.0
+	for _, head := range chosenHeads {
+		k := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
+		// kPrev += kHead
+		if k > kHead {
+			kHead = k
+		}
+	}
+	// prevFrame = newFrame
+	// kPrev = kPrev / float64(len(chosenHeads))
+
+	p := float64(nParents)
+
+	// tNew := -(1.0 / math.Log(p)) * math.Log(1.0/kNew-1.0)
+	tPrev := -(1.0 / math.Log(p)) * math.Log(1.0/kPrev-1.0)
+	tMin := -(1.0 / math.Log(p)) * math.Log(1.0/kMin-1.0)
+	tHead := -(1.0 / math.Log(p)) * math.Log(1.0/kHead-1.0)
+
+	delt_k := 0.0
+	if prevFrame < newFrame {
+		delt_k = tHead - tMin
+		// Calculate remaining DAG time for previous event to complete its frame
+		roots := h.lachesis.Store.GetFrameRoots(prevFrame + 1)
+		kRootMin := 1.0 - kMin
+		for _, root := range roots {
+			kRoot := h.EventRootKnowledgeByCountOnline(prevFrame, root.ID, nil, online)
+			if kRoot < kRootMin {
+				kRootMin = kRoot
+			}
+		}
+		tRoot := -(1.0 / math.Log(p)) * math.Log(1.0/kRootMin-1.0)
+		if tRoot > tPrev {
+			delt_k += tRoot - tPrev
+		}
+
+		//if previous is more than one frame behind, calulate DAG time duration of those intervening frames
+
+		for frame := prevFrame + 2; frame < newFrame; frame++ {
+			kRootMin = 1.0 - kMin
+			roots := h.lachesis.Store.GetFrameRoots(frame)
+			for _, root := range roots {
+				kRoot := h.EventRootKnowledgeByCountOnline(frame, root.ID, nil, online)
+				if kRoot < kRootMin {
+					kRootMin = kRoot
+				}
+			}
+			tRoot := -(1.0 / math.Log(p)) * math.Log(1.0/kRootMin-1.0)
+			delt_k += tRoot - tMin
+		}
+	} else {
+		delt_k = tHead - tPrev
+
+	}
+
+	// *** VARIABLE TIME INTERVAL***
+	// medianT := timingMedianMean(h.TimingStats)
+	// timePropConst = medianT
+	// deltRealTime := passedTime / timePropConst
+	// meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
+
+	// dt := 1.0
+	if delt_k >= timePropConst {
+		// fmt.Print(", ", kNew)
+		return kNew, true
+	}
+
+	return kNew, false
 }
 
 func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropConst float64, passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
@@ -856,21 +1096,23 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 	// k = 1.0 occurs at infinity in the sigmoid
 	// 	kNew -= kMin
 	// }
-	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
-	// kPrev := 0.0
-	// for _, head := range chosenHeads {
-	// 	kHead := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
-	// 	// kPrev += kHead
-	// 	if kHead > kPrev {
-	// 		kPrev = kHead
-	// 	}
-	// }
+	// kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+	kPrev := 0.0
+	for _, head := range chosenHeads {
+		kHead := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
+		// kPrev += kHead
+		if kHead > kPrev {
+			kPrev = kHead
+		}
+	}
 	// prevFrame = newFrame
 	// kPrev = kPrev / float64(len(chosenHeads))
 
-	tNew := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kNew-1.0)
-	tPrev := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kPrev-1.0)
-	tMin := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kMin-1.0)
+	p := float64(nParents)
+
+	tNew := -(1.0 / math.Log(p)) * math.Log(1.0/kNew-1.0)
+	tPrev := -(1.0 / math.Log(p)) * math.Log(1.0/kPrev-1.0)
+	tMin := -(1.0 / math.Log(p)) * math.Log(1.0/kMin-1.0)
 
 	delt_k := 0.0
 	if prevFrame < newFrame {
@@ -884,7 +1126,7 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 				kRootMin = kRoot
 			}
 		}
-		tRoot := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kRootMin-1.0)
+		tRoot := -(1.0 / math.Log(p)) * math.Log(1.0/kRootMin-1.0)
 		if tRoot > tPrev {
 			delt_k += tRoot - tPrev
 		}
@@ -900,13 +1142,14 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 					kRootMin = kRoot
 				}
 			}
-			tRoot := -(1.0 / math.Log(float64(nParents))) * math.Log(1.0/kRootMin-1.0)
+			tRoot := -(1.0 / math.Log(p)) * math.Log(1.0/kRootMin-1.0)
 			delt_k += tRoot - tMin
 		}
 	} else {
 		delt_k = tNew - tPrev
 
 	}
+
 	// *** VARIABLE TIME INTERVAL***
 	medianT := timingMedianMean(h.TimingStats)
 	timePropConst = medianT
