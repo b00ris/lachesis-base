@@ -52,8 +52,9 @@ type QuorumIndexer struct {
 	Dagi       DagIndex
 	validators *pos.Validators
 
-	SelfParentEvent     hash.Event
-	SelfParentEventFlag bool
+	SelfParentEvent        hash.Event
+	SelfParentEventFlag    bool
+	validatorHighestEvents []dag.Event
 
 	lachesis    *abft.Lachesis
 	r           *rand.Rand
@@ -88,17 +89,18 @@ func newTimingStats(validators *pos.Validators) *map[idx.ValidatorID]ExpMov {
 
 func NewQuorumIndexer(validators *pos.Validators, dagi DagIndex, diffMetricFn DiffMetricFn, lachesis *abft.Lachesis) *QuorumIndexer {
 	return &QuorumIndexer{
-		globalMatrix:        NewMatrix(validators.Len(), validators.Len()),
-		globalMedianSeqs:    make([]idx.Event, validators.Len()),
-		selfParentSeqs:      make([]idx.Event, validators.Len()),
-		Dagi:                dagi,
-		validators:          validators,
-		diffMetricFn:        diffMetricFn,
-		dirty:               true,
-		lachesis:            lachesis,
-		r:                   rand.New(rand.NewSource(time.Now().UnixNano())),
-		SelfParentEventFlag: false,
-		TimingStats:         *newTimingStats(validators),
+		globalMatrix:           NewMatrix(validators.Len(), validators.Len()),
+		globalMedianSeqs:       make([]idx.Event, validators.Len()),
+		selfParentSeqs:         make([]idx.Event, validators.Len()),
+		Dagi:                   dagi,
+		validators:             validators,
+		diffMetricFn:           diffMetricFn,
+		dirty:                  true,
+		lachesis:               lachesis,
+		r:                      rand.New(rand.NewSource(time.Now().UnixNano())),
+		SelfParentEventFlag:    false,
+		TimingStats:            *newTimingStats(validators),
+		validatorHighestEvents: make([]dag.Event, validators.Len()),
 	}
 }
 
@@ -155,6 +157,13 @@ func (h *QuorumIndexer) ProcessEvent(event dag.Event, selfEvent bool) {
 		}
 	}
 	h.dirty = true
+	if h.validatorHighestEvents[creatorIdx] != nil {
+		if event.Seq() > h.validatorHighestEvents[creatorIdx].Seq() {
+			h.validatorHighestEvents[creatorIdx] = event
+		}
+	} else {
+		h.validatorHighestEvents[creatorIdx] = event
+	}
 }
 
 func (h *QuorumIndexer) recacheState() {
@@ -813,7 +822,130 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	return Metric(delt_k * piecefunc.DecimalUnit)
 }
 
+func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	kGreaterCount := 0.0
+	kGreaterStake := h.validators.NewCounter()
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for new event under consideration
+	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	if kNew > kPrev {
+		for _, e := range h.validatorHighestEvents {
+			if e != nil {
+				eFrame := h.Dagi.GetEvent(e.ID()).Frame()
+				if eFrame > frame {
+					// if the highest event of another validator is ahead in frame number it is ahead of self (no need to calculate k)
+					kGreaterCount++
+					kGreaterStake.Count(e.Creator())
+				} else if eFrame == frame {
+					k := h.EventRootKnowledgeByCountOnline(frame, e.ID(), nil, online)
+					if k >= kPrev {
+						kGreaterCount++
+						kGreaterStake.Count(e.Creator())
+					}
+				}
+			}
+		}
+		n := float64(h.validators.Len())
+		selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+		selfStake := float64(h.validators.GetWeightByIdx(h.validators.GetIdx(selfID)))
+		sortedIDs := h.validators.SortedIDs()
+		quorumCounter := h.validators.NewCounter()
+		numQuorum := 0.0
+		quorumCounter.Count(selfID) // assume self is a properly functioning validator, count self plus minimum number of other validators for quourm
+		for _, ID := range sortedIDs {
+			if ID != selfID && online[ID] {
+				quorumCounter.Count(ID)
+				numQuorum++
+			}
+			if quorumCounter.HasQuorum() {
+				break
+			}
+		}
+
+		threshParam = threshParam * float64(h.validators.TotalWeight()) / float64(selfStake) / n // lower threshold for larger stake; more frequent event creation by large validators
+		maxThresh := (n - 1.0) / n
+		//maxThresh:=numQuorum/n
+		if threshParam > maxThresh {
+			threshParam = maxThresh
+		}
+		if threshParam < 1/n {
+			threshParam = 1 / n
+		}
+		if kGreaterCount/n > threshParam {
+			return true
+		}
+	}
+	return false
+}
 func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+
+	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
+
+	kGreaterCount := 0.0
+	kGreaterStake := h.validators.NewCounter()
+	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for prev self event
+	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+	if kNew > kPrev {
+		// this condition prevents the function always returning true when self is unable to make DAG progress
+		// All new events would eventually have the same k when less than QUORUM nodes are online and would lead to spamming events
+		for _, e := range h.validatorHighestEvents {
+			if e != nil {
+				eFrame := h.Dagi.GetEvent(e.ID()).Frame()
+				if eFrame > frame {
+					// if the highest event of another validator is ahead in frame number it is ahead of self (no need to calculate k)
+					kGreaterCount++
+					kGreaterStake.Count(e.Creator())
+				} else if eFrame == frame {
+					k := h.EventRootKnowledgeByCountOnline(frame, e.ID(), nil, online)
+					if k >= kPrev {
+						kGreaterCount++
+						kGreaterStake.Count(e.Creator())
+					}
+				}
+			}
+		}
+		n := float64(h.validators.Len())
+		// k0 := threshParam
+		// tau := 0.05
+		// kGreaterCount = kGreaterCount / n
+		// kGreaterCount = 1.0 / (1.0 + math.Exp(-(kGreaterCount-k0)/tau))
+
+		selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+		sortedIDs := h.validators.SortedIDs()
+		quorumCounter := h.validators.NewCounter()
+		numQuorum := 0
+		quorumCounter.Count(selfID) // assume self is a properly functioning validator, count self plus minimum number of other validators for quourm
+		for _, ID := range sortedIDs {
+			if ID != selfID {
+				if online[ID] {
+					quorumCounter.Count(ID)
+					numQuorum++
+				}
+			}
+			if quorumCounter.HasQuorum() {
+				break
+			}
+
+		}
+		tMax := threshParam
+		gMax := 0.5 * n
+		m := -gMax / tMax
+		if kGreaterCount >= m*passedTime+gMax {
+			return true
+		}
+		// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+		// selfStake := float64(h.validators.GetWeightByIdx(h.validators.GetIdx(selfID)))
+		// threshParam = threshParam * float64(h.validators.TotalWeight()) / float64(selfStake) / n // lower threshold for larger stake; more frequent event creation by large validators
+		// if kGreaterCount*passedTime > 110 {
+		// 	return true
+		// }
+	}
+	return false
+}
+
+func (h *QuorumIndexer) ValidatorComparisonAndTimeOLD(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+	// +++TODO to improve this function it would be better to cache the highest event from each validator as events are added to the DAG, also cache its k value
 	// find max frame of all heads
 	var frame idx.Frame
 	// for _, head := range allHeads {
@@ -822,8 +954,9 @@ func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads 
 
 	frame = h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
-	//find the highest event for each validator
+	//find the highest event for each validator under each head
 	candidateEvents := make(map[idx.ValidatorID][]hash.Event)
+	// start := time.Now()
 	for _, head := range allHeads {
 		stakeCtr := h.validators.NewCounter()
 		var parents hash.Events
@@ -837,6 +970,7 @@ func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads 
 			parents = parents[:len(parents)-1]
 			for _, p := range e.Parents() {
 				if h.Dagi.GetEvent(p).Frame() >= frame {
+					// only add parents events from frame of self (events from prior frame cannot be ahead of self)
 					parents.Add(p)
 				}
 			}
@@ -847,9 +981,11 @@ func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads 
 			}
 		}
 	}
-
-	// from the list of events, get the highest known event for each validator
+	// elapsed := time.Since(start)
+	// fmt.Println("Find events took ", elapsed)
+	// from the highest event from each head, get the highest across all heads
 	highestEvents := make(map[idx.ValidatorID]hash.Event)
+	// start = time.Now()
 	for validator, events := range candidateEvents {
 		var maxSeq idx.Event
 		maxSeq = 0
@@ -861,33 +997,85 @@ func (h *QuorumIndexer) ValidatorComparisonAndTime(passedTime float64, allHeads 
 			}
 		}
 	}
+	// elapsed = time.Since(start)
+	// fmt.Println("Highest events took ", elapsed)
+
+	// start = time.Now()
 	kGreaterCount := 0.0
 	kGreaterStake := h.validators.NewCounter()
 	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online) // calculate k for new event under consideration
 	for _, e := range highestEvents {
-		k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online) // calculate k for most recent self Event
-		if k >= kPrev {
+		de := h.Dagi.GetEvent(e)
+		eFrame := de.Frame()
+		if eFrame > frame {
+			// if the highest event of another validator is ahead in frame number it is ahead of self (no need to calculate k)
 			kGreaterCount++
-			de := h.Dagi.GetEvent(e)
 			kGreaterStake.Count(de.Creator())
+		} else if eFrame == frame {
+			k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online)
+			if k >= kPrev {
+				kGreaterCount++
+				kGreaterStake.Count(de.Creator())
+			}
 		}
 	}
-	// thresholdStake := threshParam * float64(h.validators.TotalWeight())
-	// stake := float64(kGreaterStake.Sum())
-	// thresholdCount := 0.1 * float64(h.validators.Len())
+	// elapsed = time.Since(start)
+	// fmt.Println("Count events took ", elapsed)
+	n := float64(h.validators.Len())
 
 	// *** VARIABLE TIME INTERVAL***
 	// medianT := timingMedianMean(h.TimingStats)
 	// timePropConst = medianT
 	// deltRealTime := passedTime / timePropConst
-	n := float64(h.validators.Len())
+
+	// orderedStake := h.validators.SortedWeights()
+	// selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	// selfStake := float64(h.validators.GetWeightByIdx(h.validators.GetIdx(selfID)))
+	// threshParam = threshParam * float64(h.validators.TotalWeight()) / float64(selfStake) / n
 	if kGreaterCount/n*passedTime > threshParam {
 		return true
 	}
 	return false
 }
 
-func (h *QuorumIndexer) ValidatorComparison(allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+func (h *QuorumIndexer) ParentDifference(chosenHeads hash.Events) bool {
+	var frame idx.Frame = 0
+	for _, head := range chosenHeads {
+		frame = maxFrame(frame, h.Dagi.GetEvent(head).Frame())
+	}
+	differentCount := 0
+	for i, head1 := range chosenHeads {
+		K1 := h.EventRootKnowledgeMatrix(head1, frame)
+		for _, head2 := range chosenHeads[i+1:] {
+			K2 := h.EventRootKnowledgeMatrix(head2, frame)
+			_, kDiffCount, _ := h.RootKnowledgeDifference(K1, K2)
+			if kDiffCount != 0 {
+				differentCount++
+			} else {
+				allZero := true
+				for _, rootCounter := range K1 {
+					if rootCounter.Sum() != 0 {
+						allZero = false
+						break
+					}
+				}
+				if allZero {
+					differentCount++
+				} else {
+					break
+				}
+			}
+
+		}
+	}
+
+	if differentCount >= 3 {
+		return true
+	}
+	return false
+}
+
+func (h *QuorumIndexer) ValidatorComparisonOLD(allHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) (float64, bool) {
 	// find max frame of all heads
 	var frame idx.Frame
 	// for _, head := range allHeads {
@@ -897,67 +1085,114 @@ func (h *QuorumIndexer) ValidatorComparison(allHeads hash.Events, chosenHeads ha
 	frame = h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
 	//find the highest event for each validator
-	candidateEvents := make(map[idx.ValidatorID][]hash.Event)
+	maxSeq := make(map[idx.ValidatorID]idx.Event)
+	maxHead := make(map[idx.ValidatorID]hash.Event)
+	for _, validator := range h.validators.Idxs() {
+		maxSeq[idx.ValidatorID(validator)] = 0
+	}
+
+	// first find which head has the highest sequence number for each validator
 	for _, head := range allHeads {
-		stakeCtr := h.validators.NewCounter()
+		HBSeq := h.Dagi.GetMergedHighestBefore(head)
+		for _, validator := range h.validators.Idxs() {
+			valID := h.validators.GetID(validator)
+			valSeq := HBSeq.Get(validator).Seq()
+			if valSeq > maxSeq[valID] {
+				maxSeq[valID] = valSeq
+				maxHead[valID] = head
+			}
+		}
+	}
+	// Now find the events corresponding to the highest sequence numbers found above
+	highestEvents := make(map[idx.ValidatorID]hash.Event)
+	for valID, head := range maxHead {
 		var parents hash.Events
 		parents.Add(head)
+		//breadth first search through head's subgraph to find the highest event for the current validator
 		for len(parents) > 0 {
-			hE := parents[len(parents)-1]
-			e := h.Dagi.GetEvent(hE)
+			eHash := parents[0]
+			e := h.Dagi.GetEvent(eHash)
 			c := e.Creator()
-			stakeCtr.Count(c)
-			candidateEvents[c] = append(candidateEvents[c], hE)
-			parents = parents[:len(parents)-1]
-			for _, p := range e.Parents() {
-				if h.Dagi.GetEvent(p).Frame() >= frame {
-					parents.Add(p)
-				}
-			}
-
-			if stakeCtr.Sum() >= h.validators.TotalWeight() {
-				// we have found an event for each validator under this head
+			if c == valID && e.Seq() == maxSeq[valID] {
+				// this is the highest event
+				highestEvents[valID] = eHash
 				break
 			}
+			parents = parents[1:]       // remove event that was checked
+			parents.Add(e.Parents()...) // add the event's parents to list of events to check
 		}
 	}
 
-	// from the list of events, get the highest known event for each validator
-	highestEvents := make(map[idx.ValidatorID]hash.Event)
-	for validator, events := range candidateEvents {
-		var maxSeq idx.Event
-		maxSeq = 0
-		for _, e := range events {
-			seq := h.Dagi.GetEvent(e).Seq()
-			if seq > maxSeq {
-				highestEvents[validator] = e
-				maxSeq = seq
-			}
-		}
-	}
 	kGreaterCount := 0.0
 	kGreaterStake := h.validators.NewCounter()
 	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online) // calculate k for new event under consideration
+	// kPrev := h.EventRootKnowledgeMatrix(h.SelfParentEvent, frame)
+	// kDAG := h.DAGRootKnowledgeMatrix(allHeads, frame)
+	// _, kPrevDiffCount, _ := h.RootKnowledgeDifference(kDAG, kPrev)
+	// _, _, kPrevDiffStake := h.RootKnowledgeDifference(kDAG, kPrev)
 	for _, e := range highestEvents {
-		k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online) // calculate k for most recent self Event
-		if k >= kPrev {
-			kGreaterCount++
-			de := h.Dagi.GetEvent(e)
-			kGreaterStake.Count(de.Creator())
+
+		if h.Dagi.GetEvent(e).Creator() != h.Dagi.GetEvent(h.SelfParentEvent).Creator() { //don't count self
+			k := h.EventRootKnowledgeByCountOnline(frame, e, nil, online)
+			// k := h.EventRootKnowledgeMatrix(e, frame)
+			// _, kDiffCount, _ := h.RootKnowledgeDifference(kDAG, k)
+			// _, _, kDiffStake := h.RootKnowledgeDifference(kDAG, k)
+			if k >= kPrev {
+				// if kPrevDiffCount >= kDiffCount {
+				// if kPrevDiffStake >= kDiffStake {
+				kGreaterCount++
+				de := h.Dagi.GetEvent(e)
+				kGreaterStake.Count(de.Creator())
+			}
 		}
 	}
+	n := float64(h.validators.Len())
+	selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
+	// selfStake := float64(h.validators.GetWeightByIdx(h.validators.GetIdx(selfID)))
+	// meanStake := float64(h.validators.TotalWeight()) / n
+	// threshParam = 1.0 - selfStake/meanStake*threshParam
+
+	sortedIDs := h.validators.SortedIDs()
+	quorumCounter := h.validators.NewCounter()
+	numQuorum := 0
+	quorumCounter.Count(selfID) // assume self is a properly functioning validator, count self plus minimum number of other validators for quourm
+	for _, ID := range sortedIDs {
+		if ID != selfID {
+			quorumCounter.Count(ID)
+			numQuorum++
+		}
+		if quorumCounter.HasQuorum() {
+			break
+		}
+
+	}
+
+	threshMax := float64(numQuorum) / n //Count based maximum threshold is minimum number of validators to reach quorum
+	threshMin := 1.0 / n                //Count based minimum threshold is one validator
+
+	// threshMax := float64(h.validators.Quorum()-selfStake) // Stake based maximum threshold
+	// sortedWeights := h.validators.SortedWeights()
+	// threshMin := float64(sortedWeights[len(sortedWeights)-1]) // Stake based minimum threshold
+	if threshParam > threshMax {
+		threshParam = threshMax
+	}
+	if threshParam < threshMin {
+		threshParam = threshMin
+	}
+
 	// thresholdStake := threshParam * float64(h.validators.TotalWeight())
 	// stake := float64(kGreaterStake.Sum())
-	// thresholdCount := threshParam * float64(h.validators.Len())
+	// return kGreaterCount / n, stake >= thresholdStake
 
-	// if stake >= thresholdStake {
-	// 	return true
-	// }
-	if kGreaterCount >= 4 {
-		return true
-	}
-	// }
-	return false
+	thresholdCount := threshParam * float64(h.validators.Len())
+	return kGreaterCount / n, kGreaterCount >= thresholdCount
+
+	// thresholdCount := threshParam * float64(h.validators.Len())
+	// thresholdStake := threshParam * float64(h.validators.TotalWeight())
+	// stake := float64(kGreaterStake.Sum())
+
+	// return kGreaterCount / n, kGreaterCount >= thresholdCount && stake >= thresholdStake
+
 }
 
 func (h *QuorumIndexer) PiecewiseLinearCondition(chosenHeads hash.Events, online map[idx.ValidatorID]bool) (float64, float64) {
@@ -1017,14 +1252,15 @@ func (h *QuorumIndexer) LogisticTimeComparison(timePropConst float64, passedTime
 
 	p := float64(nParents)
 
-	// tNew := -(1.0 / math.Log(p)) * math.Log(1.0/kNew-1.0)
+	tNew := -(1.0 / math.Log(p)) * math.Log(1.0/kNew-1.0)
 	tPrev := -(1.0 / math.Log(p)) * math.Log(1.0/kPrev-1.0)
 	tMin := -(1.0 / math.Log(p)) * math.Log(1.0/kMin-1.0)
-	tHead := -(1.0 / math.Log(p)) * math.Log(1.0/kHead-1.0)
+	// tHead := -(1.0 / math.Log(p)) * math.Log(1.0/kHead-1.0)
 
 	delt_k := 0.0
 	if prevFrame < newFrame {
-		delt_k = tHead - tMin
+		// delt_k = tHead - tMin
+		delt_k = tNew - tMin
 		// Calculate remaining DAG time for previous event to complete its frame
 		roots := h.lachesis.Store.GetFrameRoots(prevFrame + 1)
 		kRootMin := 1.0 - kMin
@@ -1054,7 +1290,8 @@ func (h *QuorumIndexer) LogisticTimeComparison(timePropConst float64, passedTime
 			delt_k += tRoot - tMin
 		}
 	} else {
-		delt_k = tHead - tPrev
+		delt_k = tNew - tPrev
+		// delt_k = tHead - tPrev
 
 	}
 
@@ -1065,12 +1302,13 @@ func (h *QuorumIndexer) LogisticTimeComparison(timePropConst float64, passedTime
 	// meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
 
 	// dt := 1.0
-	if delt_k >= timePropConst {
+	if delt_k >= 1.5 {
 		// fmt.Print(", ", kNew)
-		return kNew, true
+		return delt_k, true
+		// return kNew, true
 	}
-
-	return kNew, false
+	return delt_k, false
+	// return kNew, false
 }
 
 func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropConst float64, passedTime float64, chosenHeads hash.Events, nParents int, online map[idx.ValidatorID]bool) (float64, bool) {
@@ -1096,15 +1334,15 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 	// k = 1.0 occurs at infinity in the sigmoid
 	// 	kNew -= kMin
 	// }
-	// kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
-	kPrev := 0.0
-	for _, head := range chosenHeads {
-		kHead := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
-		// kPrev += kHead
-		if kHead > kPrev {
-			kPrev = kHead
-		}
-	}
+	kPrev := h.EventRootKnowledgeByCountOnline(prevFrame, h.SelfParentEvent, nil, online) // calculate k for most recent self event
+	// kPrev := 0.0
+	// for _, head := range chosenHeads {
+	// 	kHead := h.EventRootKnowledgeByCountOnline(newFrame, head, nil, online)
+	// 	// kPrev += kHead
+	// 	if kHead > kPrev {
+	// 		kPrev = kHead
+	// 	}
+	// }
 	// prevFrame = newFrame
 	// kPrev = kPrev / float64(len(chosenHeads))
 
@@ -1151,18 +1389,20 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountOnlineAndTime(timePropCons
 	}
 
 	// *** VARIABLE TIME INTERVAL***
-	medianT := timingMedianMean(h.TimingStats)
-	timePropConst = medianT
+	// medianT := timingMedianMean(h.TimingStats)
+	// timePropConst = medianT
 	deltRealTime := passedTime / timePropConst
 	meanDelt := math.Sqrt(delt_k * deltRealTime) //geometric mean
 
 	dt := 1.0
 	if meanDelt >= dt {
 		// fmt.Print(", ", kNew)
-		return kNew, true
+		// return kNew, true
+		return delt_k, true
 	}
 
-	return kNew, false
+	return delt_k, false
+	// return kNew, true
 }
 
 func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64, chosenHeads hash.Events, nParents int) (float64, bool) {
@@ -1213,6 +1453,54 @@ func (h *QuorumIndexer) LogisticTimingConditionByCountAndTime(passedTime float64
 	}
 
 	return kNew, false
+}
+
+func (h *QuorumIndexer) EventRootKnowledgeMatrix(event hash.Event, frame idx.Frame) map[election.RootAndSlot]*pos.WeightCounter {
+	roots := h.lachesis.Store.GetFrameRoots(frame)
+	RootKnowledge := make(map[election.RootAndSlot]*pos.WeightCounter, len(roots))
+	for _, root := range roots {
+		FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(event, root.ID, nil, nil) //compute for new event
+		RootKnowledge[root] = FCProgress[0]
+	}
+	return RootKnowledge
+}
+
+func (h *QuorumIndexer) DAGRootKnowledgeMatrix(heads hash.Events, frame idx.Frame) map[election.RootAndSlot]*pos.WeightCounter {
+	roots := h.lachesis.Store.GetFrameRoots(frame)
+	RootKnowledge := make(map[election.RootAndSlot]*pos.WeightCounter, len(roots))
+	for _, root := range roots {
+		RootKnowledge[root] = h.validators.NewCounter()
+		for _, head := range heads {
+			FCProgress := h.lachesis.DagIndex.ForklessCauseProgress(head, root.ID, nil, nil) //compute for new event
+			for _, validator := range h.validators.Idxs() {
+				if FCProgress[0].IsCounted(validator) {
+					RootKnowledge[root].CountByIdx(validator)
+				}
+			}
+		}
+	}
+	return RootKnowledge
+}
+
+func (h *QuorumIndexer) RootKnowledgeDifference(K1, K2 map[election.RootAndSlot]*pos.WeightCounter) (map[election.RootAndSlot]*pos.WeightCounter, int, pos.Weight) {
+	// Get root knowledge of K1 that is NOT known in K2
+	countDifference := 0
+	var stakeDifference pos.Weight = 0
+	RootKnowledgeDifference := make(map[election.RootAndSlot]*pos.WeightCounter, len(K1))
+	for root, rK1 := range K1 {
+		RootKnowledgeDifference[root] = h.validators.NewCounter()
+		rK2 := K2[root]
+		for _, validator := range h.validators.Idxs() {
+			if rK1.IsCounted(validator) && !rK2.IsCounted(validator) {
+				RootKnowledgeDifference[root].CountByIdx(validator)
+				countDifference++
+			}
+		}
+		rootValidatorIdx := h.validators.GetIdx(root.Slot.Validator)
+		rootStake := h.validators.GetWeightByIdx(rootValidatorIdx)
+		stakeDifference += rootStake * RootKnowledgeDifference[root].Sum()
+	}
+	return RootKnowledgeDifference, countDifference, stakeDifference
 }
 
 func (h *QuorumIndexer) UpdateTimingStats(value float64, source idx.ValidatorID) {

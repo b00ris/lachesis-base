@@ -65,7 +65,7 @@ func (s *WeightCounter) Sum() Weight {
 }
 
 // Is validator already counted
-func (s *WeightCounter) Already(validatorIdx idx.Validator) bool {
+func (s *WeightCounter) IsCounted(validatorIdx idx.Validator) bool {
 	return s.already[validatorIdx]
 }
 
