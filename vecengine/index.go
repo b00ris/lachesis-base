@@ -3,6 +3,7 @@ package vecengine
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
@@ -11,6 +12,7 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/kvdb"
 	"github.com/Fantom-foundation/lachesis-base/kvdb/flushable"
 	"github.com/Fantom-foundation/lachesis-base/kvdb/table"
+	"github.com/Fantom-foundation/lachesis-base/utils/perfl"
 )
 
 type Callbacks struct {
@@ -69,6 +71,10 @@ func (vi *Engine) Reset(validators *pos.Validators, db kvdb.Store, getEvent func
 
 // Add calculates vector clocks for the event and saves into DB.
 func (vi *Engine) Add(e dag.Event) error {
+	start := time.Now()
+	defer func(){
+		perfl.Log("Engine.Add", time.Since(start))
+	}()
 	vi.InitBranchesInfo()
 	_, err := vi.fillEventVectors(e)
 	return err
@@ -165,10 +171,12 @@ func (vi *Engine) fillEventVectors(e dag.Event) (allVecs, error) {
 	myVecs.after.InitWithEvent(meBranchID, e)
 	myVecs.before.InitWithEvent(meBranchID, e)
 
+	starth := time.Now()
 	for _, pVec := range parentsVecs {
 		// calculate HighestBefore  Detect forks for a case when parent observes a fork
 		myVecs.before.CollectFrom(pVec, idx.Validator(len(vi.bi.BranchIDCreatorIdxs)))
 	}
+	perfl.Log("before", time.Since(starth))
 	// Detect forks, which were not observed by parents
 	if vi.AtLeastOneFork() {
 		for n := idx.Validator(0); n < idx.Validator(vi.validators.Len()); n++ {
@@ -209,6 +217,7 @@ func (vi *Engine) fillEventVectors(e dag.Event) (allVecs, error) {
 	}
 
 	// graph traversal starting from e, but excluding e
+	startl := time.Now()
 	onWalk := func(walk hash.Event) (godeeper bool) {
 		wLowestAfterSeq := vi.callback.GetLowestAfter(walk)
 
@@ -223,11 +232,14 @@ func (vi *Engine) fillEventVectors(e dag.Event) (allVecs, error) {
 	if err != nil {
 		vi.crit(err)
 	}
+	perfl.Log("wLowestAfterSeq", time.Since(startl))
 
 	// store calculated vectors
+	starts := time.Now()
 	vi.callback.SetHighestBefore(e.ID(), myVecs.before)
 	vi.callback.SetLowestAfter(e.ID(), myVecs.after)
 	vi.SetEventBranchID(e.ID(), meBranchID)
+	perfl.Log("store calculated vectors", time.Since(starts))
 
 	return myVecs, nil
 }

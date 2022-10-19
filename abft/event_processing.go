@@ -1,11 +1,14 @@
 package abft
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 
 	"github.com/Fantom-foundation/lachesis-base/abft/election"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"github.com/Fantom-foundation/lachesis-base/utils/perfl"
 )
 
 var (
@@ -34,6 +37,10 @@ func (p *Orderer) Build(e dag.MutableEvent) error {
 // All the event checkers must be launched.
 // Process is not safe for concurrent use.
 func (p *Orderer) Process(e dag.Event) (err error) {
+	start := time.Now()
+	defer func(){
+		perfl.Log("Process (event)", time.Since(start))
+	}()
 	err, selfParentFrame := p.checkAndSaveEvent(e)
 	if err != nil {
 		return err
@@ -164,6 +171,10 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 // and returns event's frame.
 // It is not safe for concurrent use.
 func (p *Orderer) calcFrameIdx(e dag.Event, checkOnly bool) (selfParentFrame, frame idx.Frame) {
+	start := time.Now()
+	defer func(){
+		perfl.Log("calcFrameIdx", time.Since(start))
+	}()
 	selfParentFrame = idx.Frame(0)
 	if e.SelfParent() != nil {
 		selfParentFrame = p.input.GetEvent(*e.SelfParent()).Frame()

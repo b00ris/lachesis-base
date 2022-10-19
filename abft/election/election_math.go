@@ -3,14 +3,20 @@ package election
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"github.com/Fantom-foundation/lachesis-base/utils/perfl"
 )
 
 // ProcessRoot calculates Atropos votes only for the new root.
 // If this root observes that the current election is decided, then return decided Atropos
 func (el *Election) ProcessRoot(newRoot RootAndSlot) (*Res, error) {
+	start := time.Now()
+	defer func(){
+		perfl.Log("ProcessRoot", time.Since(start))
+	}()
 	res, err := el.chooseAtropos()
 	if err != nil || res != nil {
 		return res, err

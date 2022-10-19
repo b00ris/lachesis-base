@@ -2,9 +2,11 @@ package vecfc
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"github.com/Fantom-foundation/lachesis-base/utils/perfl"
 )
 
 type kv struct {
@@ -26,6 +28,10 @@ type kv struct {
 // This great property is the reason why this function exists,
 // providing the base for the BFT algorithm.
 func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
+	start := time.Now()
+	defer func(){
+		perfl.Log("ForklessCause", time.Since(start))
+	}()
 	if res, ok := vi.cache.ForklessCause.Get(kv{aID, bID}); ok {
 		return res.(bool)
 	}
@@ -59,6 +65,10 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 		vi.crit(fmt.Errorf("Event B=%s not found", bID.String()))
 		return false
 	}
+	start := time.Now()
+	defer func(){
+		perfl.Log("forklessCause", time.Since(start))
+	}()
 
 	yes := vi.validators.NewCounter()
 	// calculate forkless causing using the indexes

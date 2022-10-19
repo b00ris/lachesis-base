@@ -1,18 +1,24 @@
 package abft
 
 import (
+	"time"
+
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 	"github.com/Fantom-foundation/lachesis-base/inter/pos"
+	"github.com/Fantom-foundation/lachesis-base/utils/perfl"
 )
 
 // onFrameDecided moves LastDecidedFrameN to frame.
 // It includes: moving current decided frame, txs ordering and execution, epoch sealing.
 func (p *Orderer) onFrameDecided(frame idx.Frame, atropos hash.Event) (bool, error) {
 	// new checkpoint
+	start := time.Now()
 	var newValidators *pos.Validators
 	if p.callback.ApplyAtropos != nil {
+		start := time.Now()
 		newValidators = p.callback.ApplyAtropos(frame, atropos)
+		perfl.Log("ApplyAtropos", time.Since(start))
 	}
 
 	lastDecidedState := *p.store.GetLastDecidedState()
@@ -28,6 +34,7 @@ func (p *Orderer) onFrameDecided(frame idx.Frame, atropos hash.Event) (bool, err
 		p.election.Reset(p.store.GetValidators(), frame+1)
 	}
 	p.store.SetLastDecidedState(&lastDecidedState)
+	perfl.Log("onFrameDecided", time.Since(start))
 	return newValidators != nil, nil
 }
 
