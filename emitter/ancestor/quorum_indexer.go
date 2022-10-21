@@ -826,13 +826,19 @@ func (h *QuorumIndexer) GetMetricOfLogistic(chosenHeads hash.Events, nParents in
 	return Metric(delt_k * piecefunc.DecimalUnit)
 }
 
-func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) (float64, bool) {
+	n := float64(h.Validators.Len())
 	frame := h.Dagi.GetEvent(h.SelfParentEvent).Frame()
 
 	kGreaterCount := 0.0
 	kGreaterStake := h.Validators.NewCounter()
 	kPrev := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, nil, online)        // calculate k for new event under consideration
 	kNew := h.EventRootKnowledgeByCountOnline(frame, h.SelfParentEvent, chosenHeads, online) // calculate k for new event under consideration
+
+	// kPrev := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, nil)
+	// kNew := h.EventRootKnowledgeQByCount(frame, h.SelfParentEvent, chosenHeads)
+	// kPrev := h.eventRootKnowledgeQByStake(frame, h.SelfParentEvent, nil)
+	// kNew := h.eventRootKnowledgeQByStake(frame, h.SelfParentEvent, chosenHeads)
 	if kNew > kPrev {
 		for _, e := range h.validatorHighestEvents {
 			if e != nil {
@@ -843,6 +849,8 @@ func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[
 					kGreaterStake.Count(e.Creator())
 				} else if eFrame == frame {
 					k := h.EventRootKnowledgeByCountOnline(frame, e.ID(), nil, online)
+					// k := h.eventRootKnowledgeQByStake(frame, e.ID(), nil)
+					// k := h.EventRootKnowledgeQByCount(frame, e.ID(), nil)
 					if k >= kPrev {
 						kGreaterCount++
 						kGreaterStake.Count(e.Creator())
@@ -850,7 +858,7 @@ func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[
 				}
 			}
 		}
-		n := float64(h.Validators.Len())
+
 		selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
 
 		sortedIDs := h.Validators.SortedIDs()
@@ -882,6 +890,7 @@ func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[
 		// selfStake := float64(h.Validators.GetWeightByIdx(h.Validators.GetIdx(selfID)))
 		// threshParam = threshParam * float64(h.Validators.TotalWeight()) / float64(selfStake) / n // lower threshold for larger stake; more frequent event creation by large validators
 		maxThresh := (n - 1.0) / n
+		// maxThresh := numQuorum / n
 		// maxThresh := threshParam
 		// minThresh := 4 / n
 		// m := -(maxThresh - minThresh) / (float64(maxStake) - float64(minStake))
@@ -897,10 +906,10 @@ func (h *QuorumIndexer) ValidatorComparison(chosenHeads hash.Events, online map[
 			threshParam = 1 / n
 		}
 		if kGreaterCount/n >= threshParam {
-			return true
+			return kGreaterCount / n, true
 		}
 	}
-	return false
+	return kGreaterCount / n, false
 }
 
 func (h *QuorumIndexer) KComparison(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
@@ -933,14 +942,37 @@ func (h *QuorumIndexer) KComparison(passedTime float64, allHeads hash.Events, ch
 	return false
 }
 
-func (h *QuorumIndexer) ReceiveTimeComparison(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+func (h *QuorumIndexer) HighestBeforeComparison(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
+	eSelf := h.Dagi.GetEvent(h.SelfParentEvent)
+	parents := eSelf.Parents()
+	selfHB := h.GetMetricOfViaParents(parents)
+	GreaterCount := 0.0
+	GreaterStake := h.Validators.NewCounter()
+	for i, e := range h.validatorHighestEvents {
+		if e != nil {
+			HB := h.GetMetricOfViaParents(e.Parents())
+			if HB > selfHB {
+				GreaterCount++
+				e := h.validatorHighestEvents[i]
+				GreaterStake.Count(e.Creator())
+			}
+		}
+	}
+	n := float64(h.Validators.Len())
+	if GreaterCount/n > threshParam {
+		return true
+	}
+	return false
+}
+
+func (h *QuorumIndexer) TimeComparison(passedTime float64, allHeads hash.Events, chosenHeads hash.Events, online map[idx.ValidatorID]bool, threshParam float64) bool {
 	selfID := h.Dagi.GetEvent(h.SelfParentEvent).Creator()
 	selfIdx := h.Validators.GetIdx(selfID)
 	selft := h.validatorHighestEventsTime[selfIdx]
 	GreaterCount := 0.0
 	GreaterStake := h.Validators.NewCounter()
 	for i, t := range h.validatorHighestEventsTime {
-		if t > selft {
+		if t >= selft {
 			GreaterCount++
 			e := h.validatorHighestEvents[i]
 			GreaterStake.Count(e.Creator())
