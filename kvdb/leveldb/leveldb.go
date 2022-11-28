@@ -4,6 +4,7 @@
 package leveldb
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -25,6 +26,11 @@ const (
 	// minHandles is the minimum number of files handles to allocate to the open
 	// database files.
 	minHandles = 16
+)
+
+
+var (
+	ReadOnly = true
 )
 
 // Database is a persistent key-value store. Apart from basic data storage
@@ -131,8 +137,12 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 		BlockCacheCapacity:     aligned256kb(cache / 2),
 		WriteBuffer:            aligned256kb(cache / 4), // Two of these are used internally
 		Filter:                 filter.NewBloomFilter(10),
+		ReadOnly:               ReadOnly,
+		Strict:                 opt.StrictAll,
 	})
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
+		println("recover", err.Error())
+		return nil, err
 		db, err = leveldb.RecoverFile(path, nil)
 	}
 	if err != nil {
@@ -244,6 +254,14 @@ func (db *Database) GetSnapshot() (kvdb.Snapshot, error) {
 
 // Stat returns a particular internal stat of the database.
 func (db *Database) Stat(property string) (string, error) {
+	if property == "all" {
+		dbStats := &leveldb.DBStats{}
+		if err := db.underlying.Stats(dbStats); err != nil {
+			return "", err
+		}
+		str, err := json.Marshal(dbStats)
+		return string(str), err
+	}
 	if property == "disk.size" {
 		dbStats := &leveldb.DBStats{}
 		if err := db.underlying.Stats(dbStats); err != nil {
