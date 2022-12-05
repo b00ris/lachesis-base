@@ -1,3 +1,4 @@
+//go:build !js
 // +build !js
 
 // Package leveldb implements the key-value database layer based on LevelDB.
@@ -28,9 +29,8 @@ const (
 	minHandles = 16
 )
 
-
 var (
-	ReadOnly = true
+	ReadOnly = false
 )
 
 // Database is a persistent key-value store. Apart from basic data storage
@@ -115,11 +115,12 @@ var adjustCache = piecefunc.NewFunc([]piecefunc.Dot{
 })
 
 func aligned256kb(v int) int {
-	base := 256 * opt.KiB
-	if v < base {
-		return v
-	}
-	return v / base * base
+	//base := 256 * opt.KiB
+	//if v < base {
+	//	return v
+	//}
+	//return v / base * base
+	return v
 }
 
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
@@ -129,7 +130,7 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 	if handles < minHandles {
 		handles = minHandles
 	}
-	cache = int(adjustCache(uint64(cache)))
+	//cache = int(adjustCache(uint64(cache)))
 
 	// Open the db and recover any potential corruptions
 	db, err := leveldb.OpenFile(path, &opt.Options{
@@ -138,7 +139,6 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 		WriteBuffer:            aligned256kb(cache / 4), // Two of these are used internally
 		Filter:                 filter.NewBloomFilter(10),
 		ReadOnly:               ReadOnly,
-		Strict:                 opt.StrictAll,
 	})
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
 		println("recover", err.Error())
@@ -148,6 +148,7 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 	if err != nil {
 		return nil, err
 	}
+
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		filename:   path,
@@ -156,6 +157,8 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 
 	ldb.onClose = close
 	ldb.onDrop = drop
+	str, _ := ldb.Stat("all")
+	println("open -----", str)
 
 	return ldb, nil
 }
@@ -163,6 +166,8 @@ func New(path string, cache int, handles int, close func() error, drop func()) (
 // Close stops the metrics collection, flushes any pending data to disk and closes
 // all io accesses to the underlying key-value store.
 func (db *Database) Close() error {
+	str, _ := db.Stat("all")
+	println("close -----", str)
 	db.quitLock.Lock()
 	defer db.quitLock.Unlock()
 
