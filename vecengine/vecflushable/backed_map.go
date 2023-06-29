@@ -20,7 +20,7 @@ func newBackedMap(backup kvdb.Store, maxMemSize int) *backedMap {
 	return &backedMap{
 		cache:      make(map[string][]byte),
 		backup:     backup,
-		maxMemSize: maxMemSize,
+		maxMemSize: 100 * 1024 * 1024,
 	}
 }
 
@@ -56,8 +56,14 @@ func (w *backedMap) add(key string, val []byte) {
 	}
 }
 
+var counter int
+
 // mayUnload evicts and flushes one batch of data
 func (w *backedMap) mayUnload() error {
+	counter++
+	if counter%100 == 0 {
+		println("=i+i=", w.memSize)
+	}
 	for w.memSize > w.maxMemSize {
 		err := w.unload(kvdb.IdealBatchSize)
 		if err != nil {
