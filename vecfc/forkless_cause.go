@@ -46,6 +46,7 @@ func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
 }
 
 func (vi *Index) forklessCause(aID, bID hash.Event) bool {
+	println("comparing", aID.String(), bID.String())
 	// Get events by hash
 	a := vi.GetHighestBefore(aID)
 	if a == nil {
@@ -72,11 +73,13 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 	// calculate forkless causing using the indexes
 	branchIDs := vi.Engine.BranchesInfo().BranchIDCreatorIdxs
 	for branchIDint, creatorIdx := range branchIDs {
+		println("branchIDint", branchIDint, "creatorIdx", creatorIdx)
 		branchID := idx.Validator(branchIDint)
 
 		// bLowestAfter := vi.GetLowestAfterSeq_(bID, branchID)   // lowest event from creator on branchID, which observes B
 		bLowestAfter := b.Get(branchID)   // lowest event from creator on branchID, which observes B
 		aHighestBefore := a.Get(branchID) // highest event from creator, observed by A
+		println("bLowestAfter", bLowestAfter, "aHighestBefore.Seq", aHighestBefore.Seq, "aHighestBefore.MinSeq", aHighestBefore.MinSeq, "aHighestBefore.IsForkDetected()", aHighestBefore.IsForkDetected())
 
 		// if lowest event from branchID which observes B <= highest from branchID observed by A
 		// then {highest from branchID observed by A} observes B
