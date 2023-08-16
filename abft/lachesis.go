@@ -52,7 +52,10 @@ func (p *Lachesis) confirmEvents(frame idx.Frame, atropos hash.Event, onEventCon
 	return err
 }
 
+var Debug = map[idx.Epoch]hash.Events{}
+
 func (p *Lachesis) applyAtropos(decidedFrame idx.Frame, atropos hash.Event) *pos.Validators {
+	Debug[atropos.Epoch()] = append(Debug[atropos.Epoch()], atropos)
 	atroposVecClock := p.dagIndex.GetMergedHighestBefore(atropos)
 
 	validators := p.store.GetValidators()

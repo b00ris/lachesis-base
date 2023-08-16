@@ -12,6 +12,12 @@ type kv struct {
 	a, b hash.Event
 }
 
+type Kv struct {
+	A, B hash.Event
+}
+
+var Debug = map[Kv]bool{}
+
 // ForklessCause calculates "sufficient coherence" between the events.
 // The A.HighestBefore array remembers the sequence number of the last
 // event by each validator that is an ancestor of A. The array for
@@ -33,6 +39,7 @@ func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
 
 	vi.Engine.InitBranchesInfo()
 	res := vi.forklessCause(aID, bID)
+	Debug[Kv{aID, bID}] = res
 
 	vi.cache.ForklessCause.Add(kv{aID, bID}, res, 1)
 	return res
