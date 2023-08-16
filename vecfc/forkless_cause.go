@@ -46,9 +46,9 @@ func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
 }
 
 func (vi *Index) forklessCause(aID, bID hash.Event) bool {
-	log := aID == hash.HexToEventHash("0x000016fb0000001257958a66036ac4ab543d49fd5b381f6b96b1dff6e90da68f") && bID == hash.HexToEventHash("0x000016fb0000000f09c243d703c56c8ea79c3f35e32e62340e317de0a6934412")
+	log := aID == hash.HexToEventHash("0x000016fb0000001257958a66036ac4ab543d49fd5b381f6b96b1dff6e90da68f") && bID == hash.HexToEventHash("0x000016fb0000000e23097384cde49a68e7829e25d647ae3f86aa308bb20f4992")
 	if log {
-		println("comparing", aID.String(), bID.String())
+		println("comparing", aID.Hex(), bID.Hex())
 	}
 	// Get events by hash
 	a := vi.GetHighestBefore(aID)
