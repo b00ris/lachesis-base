@@ -152,14 +152,14 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 	lg := false
 	var fl *os.File
 	var err error
-	if e.ID().Hex() == "0000169e00000014b6fcd1314fc53c9e43dd69a2f45f61cc6cf06f1df1e20148" {
-		lg = true
-		fl, err = os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
-		if err != nil {
-			panic(err)
-		}
-		defer fl.Close()
+	//if e.ID().Hex() == "0000169e00000014b6fcd1314fc53c9e43dd69a2f45f61cc6cf06f1df1e20148" {
+	lg = true
+	fl, err = os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
+	if err != nil {
+		panic(err)
 	}
+	defer fl.Close()
+	//}
 	if lg {
 		fmt.Fprintln(fl, "forkless_caused_by_quorum_on ", f, e.ID().Hex())
 	}
