@@ -158,6 +158,7 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 		if err != nil {
 			panic(err)
 		}
+		defer fl.Close()
 	}
 	if lg {
 		fmt.Fprintln(fl, "forkless_caused_by_quorum_on ", f, e.ID().Hex())
