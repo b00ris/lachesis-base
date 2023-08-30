@@ -3,6 +3,7 @@ package abft
 import (
 	"fmt"
 	"github.com/pkg/errors"
+	"os"
 
 	"github.com/Fantom-foundation/lachesis-base/abft/election"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
@@ -149,17 +150,23 @@ func (p *Orderer) processKnownRoots() (*election.Res, error) {
 // forklessCausedByQuorumOn returns true if event is forkless caused by 2/3W roots on specified frame
 func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 	lg := false
+	var fl *os.File
+	var err error
 	if e.ID().Hex() == "0000169e00000014b6fcd1314fc53c9e43dd69a2f45f61cc6cf06f1df1e20148" {
 		lg = true
+		fl, err = os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
+		if err != nil {
+			panic(err)
+		}
 	}
 	if lg {
-		fmt.Println("forkless_caused_by_quorum_on ", f, e.ID().Hex())
+		fmt.Fprintln(fl, "forkless_caused_by_quorum_on ", f, e.ID().Hex())
 	}
 	observedCounter := p.store.GetValidators().NewCounter()
 	// check "observing" prev roots only if called by creator, or if creator has marked that event as root
 	for _, it := range p.store.GetFrameRoots(f) {
 		if lg {
-			fmt.Println("root ", it.ID.Hex(), ",slot ", it.Slot, " forkless_cause ", p.dagIndex.ForklessCause(e.ID(), it.ID))
+			fmt.Fprintln(fl, "root ", it.ID.Hex(), ",slot ", it.Slot, " forkless_cause ", p.dagIndex.ForklessCause(e.ID(), it.ID))
 		}
 		if p.dagIndex.ForklessCause(e.ID(), it.ID) {
 			observedCounter.Count(it.Slot.Validator)
