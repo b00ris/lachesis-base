@@ -201,8 +201,15 @@ func (p *Orderer) calcFrameIdx(e dag.Event, checkOnly bool) (selfParentFrame, fr
 	var f idx.Frame
 	for f = selfParentFrame; f < maxFrameToCheck && p.forklessCausedByQuorumOn(e, f); f++ {
 	}
+	fl, err := os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
+	if err != nil {
+		panic(err)
+	}
+	defer fl.Close()
 	if f == 0 {
 		f = 1
 	}
+	fmt.Fprintln(fl, "calc_frame_idx", e.ID().Hex(), selfParentFrame, f)
+
 	return selfParentFrame, f
 }
