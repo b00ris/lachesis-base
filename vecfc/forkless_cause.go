@@ -103,11 +103,11 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 			// so not every call increases the counter
 			yes.CountByIdx(creatorIdx)
 			if log {
-				println("yes")
+				fmt.Fprintln(fl, "yes")
 			}
 		} else {
 			if log {
-				println("no")
+				fmt.Fprintln(fl, "no")
 			}
 		}
 	}

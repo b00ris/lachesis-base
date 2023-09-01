@@ -166,10 +166,11 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 	observedCounter := p.store.GetValidators().NewCounter()
 	// check "observing" prev roots only if called by creator, or if creator has marked that event as root
 	for _, it := range p.store.GetFrameRoots(f) {
+		fc := p.dagIndex.ForklessCause(e.ID(), it.ID)
 		if lg {
-			fmt.Fprintln(fl, "root", it.ID.Hex(), "slot", it.Slot.Validator, it.Slot.Frame, "forkless_cause", p.dagIndex.ForklessCause(e.ID(), it.ID))
+			fmt.Fprintln(fl, "root", it.ID.Hex(), "slot", it.Slot.Validator, it.Slot.Frame, "forkless_cause", fc)
 		}
-		if p.dagIndex.ForklessCause(e.ID(), it.ID) {
+		if fc {
 			observedCounter.Count(it.Slot.Validator)
 		}
 		if observedCounter.HasQuorum() {
