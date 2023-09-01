@@ -101,9 +101,9 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 		if bLowestAfter <= aHighestBefore.Seq && bLowestAfter != 0 && !aHighestBefore.IsForkDetected() {
 			// we may count the same creator multiple times (on different branches)!
 			// so not every call increases the counter
-			yes.CountByIdx(creatorIdx)
+			v := yes.CountByIdx(creatorIdx)
 			if log {
-				fmt.Fprintln(fl, "yes")
+				fmt.Fprintln(fl, "yes", creatorIdx, v, vi.validators.GetWeightByIdx(creatorIdx))
 			}
 		} else {
 			if log {
