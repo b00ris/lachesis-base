@@ -3,11 +3,11 @@ package abft
 import (
 	"bytes"
 	"fmt"
-
 	"github.com/Fantom-foundation/lachesis-base/abft/election"
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/dag"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"os"
 )
 
 func rootRecordKey(r *election.RootAndSlot) []byte {
@@ -21,7 +21,14 @@ func rootRecordKey(r *election.RootAndSlot) []byte {
 // AddRoot stores the new root
 // Not safe for concurrent use due to the complex mutable cache!
 func (s *Store) AddRoot(selfParentFrame idx.Frame, root dag.Event) {
+	fl, err := os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
+	if err != nil {
+		panic(err)
+	}
+	defer fl.Close()
+
 	for f := selfParentFrame + 1; f <= root.Frame(); f++ {
+		fmt.Fprintln(fl, "add root", root.ID().Hex(), f)
 		s.addRoot(root, f)
 	}
 }
