@@ -63,6 +63,11 @@ func (p *Orderer) Reset(epoch idx.Epoch, validators *pos.Validators) error {
 		return err
 	}
 	p.election.Reset(validators, FirstFrame)
+
+	println("validators of epoch", epoch)
+	for _, v := range validators.SortedIDs() {
+		println(v, "=>", validators.GetWeightByIdx(validators.GetIdx(v)))
+	}
 	return nil
 }
 
