@@ -2,6 +2,7 @@ package vecfc
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/Fantom-foundation/lachesis-base/hash"
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
@@ -46,9 +47,15 @@ func (vi *Index) ForklessCause(aID, bID hash.Event) bool {
 }
 
 func (vi *Index) forklessCause(aID, bID hash.Event) bool {
-	log := false //aID == hash.HexToEventHash("0x000016fb0000001257958a66036ac4ab543d49fd5b381f6b96b1dff6e90da68f") && bID == hash.HexToEventHash("0x000016fb0000000e23097384cde49a68e7829e25d647ae3f86aa308bb20f4992")
+	log := aID == hash.HexToEventHash("0x0000169e00000014b6fcd1314fc53c9e43dd69a2f45f61cc6cf06f1df1e20148")
+	fl, err := os.OpenFile("/tmp/debug.txt", os.O_WRONLY|os.O_APPEND, 0777)
+	if err != nil {
+		panic(err)
+	}
+	defer fl.Close()
+
 	if log {
-		println("comparing", aID.Hex(), bID.Hex())
+		fmt.Fprintln(fl, "comparing", aID.Hex(), bID.Hex())
 	}
 	// Get events by hash
 	a := vi.GetHighestBefore(aID)
@@ -77,7 +84,8 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 	branchIDs := vi.Engine.BranchesInfo().BranchIDCreatorIdxs
 	for branchIDint, creatorIdx := range branchIDs {
 		if log {
-			println("branchIDint", branchIDint, "creatorIdx", creatorIdx)
+
+			fmt.Fprintln(fl, "branchIDint", branchIDint, "creatorIdx", creatorIdx)
 		}
 		branchID := idx.Validator(branchIDint)
 
@@ -85,7 +93,7 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 		bLowestAfter := b.Get(branchID)   // lowest event from creator on branchID, which observes B
 		aHighestBefore := a.Get(branchID) // highest event from creator, observed by A
 		if log {
-			println("bLowestAfter", bLowestAfter, "aHighestBefore.Seq", aHighestBefore.Seq, "aHighestBefore.MinSeq", aHighestBefore.MinSeq, "aHighestBefore.IsForkDetected()", aHighestBefore.IsForkDetected())
+			fmt.Fprintln(fl, "bLowestAfter", bLowestAfter, "aHighestBefore.Seq", aHighestBefore.Seq, "aHighestBefore.MinSeq", aHighestBefore.MinSeq, "aHighestBefore.IsForkDetected()", aHighestBefore.IsForkDetected())
 		}
 
 		// if lowest event from branchID which observes B <= highest from branchID observed by A
@@ -104,7 +112,7 @@ func (vi *Index) forklessCause(aID, bID hash.Event) bool {
 		}
 	}
 	if log {
-		println("weight", yes.Sum())
+		fmt.Fprintln(fl, "weight", yes.Sum())
 	}
 	return yes.HasQuorum()
 }
