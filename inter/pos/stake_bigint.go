@@ -35,15 +35,18 @@ func (vv ValidatorsBigBuilder) TotalWeight() *big.Int {
 // Build new read-only Validators object
 func (vv ValidatorsBigBuilder) Build() *Validators {
 	totalBits := vv.TotalWeight().BitLen()
+	println("total bits", totalBits)
 	// use downscaling by a 2^n ratio, instead of n for simplicity and performance reasons
 	shift := uint(0)
 	if totalBits > 31 {
 		shift = uint(totalBits - 31)
 	}
+	println("shift", shift)
 
 	builder := NewBuilder()
 	for v, w := range vv {
 		weight := new(big.Int).Rsh(w, shift)
+		println(v, "=>", weight.Uint64())
 		builder.Set(v, Weight(weight.Uint64()))
 	}
 	return builder.Build()
