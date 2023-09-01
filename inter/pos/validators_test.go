@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"testing"
@@ -195,4 +196,15 @@ func TestValidators_Big(t *testing.T) {
 	assert.Equal(t, Weight(0x4e1ff), v.Get(2500))
 	assert.Equal(t, Weight(0x9c37f), v.Get(4999))
 	assert.Equal(t, Weight(0x9c3ff), v.Get(5000))
+}
+
+func TestName(t *testing.T) {
+	//57 => 143604155553762158579949151 => [11/11]0x1400ba9a7d5 => 124556749
+	v, ok := big.NewInt(0).SetString("143604155553762158579949151", 10)
+	t.Log(ok, v.String())
+	v2 := v.Rsh(v, 60).Uint64()
+	t.Log(v2, v2 == uint64(124556749))
+	t.Log()
+
+	fmt.Println([]bool{true, true, false})
 }

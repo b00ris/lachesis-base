@@ -59,6 +59,16 @@ func (s *WeightCounter) HasQuorum() bool {
 	return s.sum >= s.quorum
 }
 
+// HasQuorum achieved.
+func (s *WeightCounter) GetQuorum() Weight {
+	return s.quorum
+}
+
+// HasQuorum achieved.
+func (s *WeightCounter) Already() []bool {
+	return s.already
+}
+
 // Sum of counted weights.
 func (s *WeightCounter) Sum() Weight {
 	return s.sum

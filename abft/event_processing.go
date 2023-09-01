@@ -177,6 +177,29 @@ func (p *Orderer) forklessCausedByQuorumOn(e dag.Event, f idx.Frame) bool {
 			break
 		}
 	}
+	if lg {
+		/*
+			writeln!(
+				&mut fl,
+				"event 0x{} roots f:{} has quorum {}",
+				hex::encode(event_id),
+				f,
+				observed_counter.has_quorum()
+			);
+			writeln!(
+				&mut fl,
+				"observed_counter sum: {} quorum: {}",
+				observed_counter.sum(),
+				observed_counter.get_quorum()
+			);
+			writeln!(&mut fl, "voted {:?}", observed_counter.already());
+
+		*/
+		fmt.Fprintln(fl, "event", e.ID().Hex(), "roots f:", f, "has quorum", observedCounter.HasQuorum())
+		fmt.Fprintln(fl, "observed_counter sum:", observedCounter.Sum(), "quorum:", observedCounter.GetQuorum())
+		fmt.Fprintln(fl, "voted ", observedCounter.Already())
+
+	}
 	return observedCounter.HasQuorum()
 }
 
