@@ -45,8 +45,9 @@ func (vv ValidatorsBigBuilder) Build() *Validators {
 
 	builder := NewBuilder()
 	for v, w := range vv {
+		println(v, "=>", w.String(), "=>", w.Bytes())
 		weight := new(big.Int).Rsh(w, shift)
-		println(v, "=>", w.Text(10), "=>", weight.Uint64())
+		println(v, "=>", w.String(), "=>", w.Bytes(), "=>", weight.Uint64())
 		builder.Set(v, Weight(weight.Uint64()))
 	}
 	return builder.Build()
